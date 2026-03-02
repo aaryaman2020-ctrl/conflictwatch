@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="CONFLICTWATCH — Real-time global conflict and military action monitoring dashboard.">
+  <title>CONFLICTWATCH — Global Conflict Intelligence</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+
+  <!-- App CSS -->
+  <link rel="stylesheet" href="base.css">
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Extra Leaflet popup styling for both modes -->
+  <style>
+    .leaflet-popup-content-wrapper,
+    .leaflet-popup-tip {
+      background: var(--color-surface-2) !important;
+      border: 1px solid var(--color-border) !important;
+      color: var(--color-text) !important;
+      box-shadow: var(--shadow-lg) !important;
+    }
+    .leaflet-popup-content-wrapper {
+      border-radius: var(--radius-lg) !important;
+    }
+    .leaflet-popup-close-button {
+      color: var(--color-text-muted) !important;
+      font-size: 18px !important;
+    }
+    .leaflet-popup-close-button:hover { color: var(--color-text) !important; }
+    .leaflet-control-zoom a {
+      background: var(--color-surface) !important;
+      color: var(--color-text) !important;
+      border-color: var(--color-border) !important;
+    }
+    .leaflet-control-zoom a:hover {
+      background: var(--color-surface-2) !important;
+    }
+    .leaflet-control-attribution {
+      background: var(--color-surface) !important;
+      color: var(--color-text-faint) !important;
+      font-size: 9px !important;
+    }
+    .leaflet-control-attribution a { color: var(--color-primary) !important; }
+    /* CartoDB dark tiles used - no filter needed */
+  </style>
+</head>
+<body>
+  <!-- Skip to content -->
+  <a href="#main-content" class="sr-only">Skip to main content</a>
+
+  <div class="dashboard">
+    <!-- ==================== HEADER ==================== -->
+    <header class="header">
+      <!-- Brand -->
+      <div class="header-brand">
+        <svg class="brand-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="14" cy="14" r="12" stroke="currentColor" stroke-width="1.5"/>
+          <circle cx="14" cy="14" r="7" stroke="currentColor" stroke-width="1.5"/>
+          <circle cx="14" cy="14" r="2.5" fill="currentColor"/>
+          <line x1="14" y1="2" x2="14" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="14" y1="22" x2="14" y2="26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="2" y1="14" x2="6" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="22" y1="14" x2="26" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span class="brand-name">ConflictWatch</span>
+        <span class="brand-tagline">/ Global Intelligence</span>
+      </div>
+
+      <!-- Tab Navigation -->
+      <nav class="header-nav" role="navigation" aria-label="Main sections">
+        <button class="tab-btn active" data-tab="live" aria-selected="true">
+          <span class="dot-pulse" style="display:inline-block;margin-right:5px;"></span>
+          Live Conflicts
+        </button>
+        <button class="tab-btn" data-tab="historical" aria-selected="false">Historical</button>
+        <button class="tab-btn" data-tab="analytics" aria-selected="false">Analytics</button>
+      </nav>
+
+      <!-- Controls -->
+      <div class="header-controls">
+        <span class="last-updated" id="last-updated">—</span>
+        <a href="https://www.gdeltproject.org/" class="attribution" target="_blank" rel="noopener noreferrer">Data: GDELT</a>
+        <button class="icon-btn" data-theme-toggle aria-label="Toggle dark/light mode">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ==================== MAIN ==================== -->
+    <main class="main-content" id="main-content">
+
+      <!-- ===== TAB 1: LIVE CONFLICTS ===== -->
+      <div class="tab-panel active" data-panel="live" role="tabpanel">
+        <div class="live-layout">
+
+          <!-- Map Section -->
+          <div class="map-section">
+            <!-- Loading Overlay -->
+            <div class="map-loading" id="live-map-loading">
+              <div class="loading-spinner"></div>
+              <div class="loading-text">Fetching GDELT conflict data&hellip;</div>
+            </div>
+
+            <!-- Filter Controls -->
+            <div class="map-controls">
+              <div class="filter-row severity-filter-row">
+                <button class="filter-btn active" data-severity="all">All</button>
+                <button class="filter-btn" data-severity="critical">&#x25CF; Critical</button>
+                <button class="filter-btn" data-severity="high">&#x25CF; High</button>
+                <button class="filter-btn" data-severity="medium">&#x25CF; Medium</button>
+                <button class="filter-btn" data-severity="low">&#x25CF; Low</button>
+                <button class="refresh-btn">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+                  <span class="refresh-text">Refresh</span>
+                </button>
+              </div>
+              <div class="filter-row attack-type-filter-row" id="attack-type-filters">
+                <button class="atk-filter-btn active" data-attack="all">All Types</button>
+                <button class="atk-filter-btn" data-attack="Airstrike">✈ Airstrike</button>
+                <button class="atk-filter-btn" data-attack="Missile Strike">🚀 Missile</button>
+                <button class="atk-filter-btn" data-attack="Drone Strike">🎯 Drone</button>
+                <button class="atk-filter-btn" data-attack="Artillery">💥 Artillery</button>
+                <button class="atk-filter-btn" data-attack="Ground Assault">⚔ Ground</button>
+                <button class="atk-filter-btn" data-attack="Naval">🚢 Naval</button>
+                <button class="atk-filter-btn" data-attack="IED/VBIED">💣 IED</button>
+                <button class="atk-filter-btn" data-attack="Suicide Attack">⚠ Suicide</button>
+                <button class="atk-filter-btn" data-attack="Cyber/EW">📡 Cyber/EW</button>
+              </div>
+            </div>
+
+            <!-- Map -->
+            <div id="live-map" role="application" aria-label="Live conflict locations map"></div>
+          </div>
+
+          <!-- Data Table Panel -->
+          <div class="data-panel">
+            <div class="panel-header">
+              <span class="panel-title">Active Conflict Zones</span>
+              <span class="panel-count" id="live-count">Loading…</span>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table" id="live-table" aria-label="Active conflict zones">
+                <thead>
+                  <tr>
+                    <th class="rank-cell" style="width:36px;">#</th>
+                    <th data-sort="name">Location</th>
+                    <th data-sort="conflict">Conflict</th>
+                    <th data-sort="attackType">Attack Type</th>
+                    <th data-sort="severity">Severity</th>
+                    <th data-sort="count" class="sort-desc tabular-nums">Coverage</th>
+                  </tr>
+                </thead>
+                <tbody id="live-table-body">
+                  <!-- Skeleton rows -->
+                  <tr><td colspan="6">
+                    <div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:30px;height:1em;"></div><div style="flex:1"><div class="skeleton skeleton-cell" style="width:60%"></div></div><div class="skeleton skeleton-cell" style="width:100px;"></div><div class="skeleton skeleton-cell" style="width:80px;height:22px;border-radius:99px;"></div><div class="skeleton skeleton-cell" style="width:60px;height:22px;border-radius:99px;"></div><div class="skeleton skeleton-cell" style="width:60px;"></div></div>
+                  </td></tr>
+                  <tr><td colspan="6">
+                    <div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:30px;height:1em;"></div><div style="flex:1"><div class="skeleton skeleton-cell" style="width:50%"></div></div><div class="skeleton skeleton-cell" style="width:120px;"></div><div class="skeleton skeleton-cell" style="width:70px;height:22px;border-radius:99px;"></div><div class="skeleton skeleton-cell" style="width:55px;height:22px;border-radius:99px;"></div><div class="skeleton skeleton-cell" style="width:50px;"></div></div>
+                  </td></tr>
+                  <tr><td colspan="6">
+                    <div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:30px;height:1em;"></div><div style="flex:1"><div class="skeleton skeleton-cell" style="width:45%"></div></div><div class="skeleton skeleton-cell" style="width:90px;"></div><div class="skeleton skeleton-cell" style="width:90px;height:22px;border-radius:99px;"></div><div class="skeleton skeleton-cell" style="width:50px;height:22px;border-radius:99px;"></div><div class="skeleton skeleton-cell" style="width:55px;"></div></div>
+                  </td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ===== TAB 2: HISTORICAL ===== -->
+      <div class="tab-panel" data-panel="historical" role="tabpanel">
+        <div class="hist-layout">
+
+          <!-- Filter Sidebar -->
+          <aside class="hist-sidebar" aria-label="Conflict filters">
+            <div class="sidebar-header">Filters</div>
+
+            <!-- Country -->
+            <div class="filter-section">
+              <label class="filter-label" for="filter-country">Country / Region</label>
+              <select class="filter-select" id="filter-country">
+                <option value="">All Countries</option>
+              </select>
+            </div>
+
+            <!-- Type -->
+            <div class="filter-section">
+              <span class="filter-label">Conflict Type</span>
+              <div class="checkbox-group" id="filter-types"></div>
+            </div>
+
+            <!-- Year Range -->
+            <div class="filter-section">
+              <span class="filter-label">Year Range</span>
+              <div class="range-container">
+                <div class="range-values">
+                  <span id="year-min-val">1975</span>
+                  <span id="year-max-val">2025</span>
+                </div>
+                <input type="range" class="range-slider" id="filter-year-min" min="1975" max="2025" value="1975" step="5" aria-label="Start year">
+                <input type="range" class="range-slider" id="filter-year-max" min="1975" max="2025" value="2025" step="5" aria-label="End year">
+              </div>
+            </div>
+
+            <!-- Severity Range -->
+            <div class="filter-section">
+              <span class="filter-label">Severity (1–5)</span>
+              <div class="range-container">
+                <div class="range-values">
+                  <span id="sev-min-val">1</span>
+                  <span id="sev-max-val">5</span>
+                </div>
+                <input type="range" class="range-slider" id="filter-sev-min" min="1" max="5" value="1" step="1" aria-label="Min severity">
+                <input type="range" class="range-slider" id="filter-sev-max" min="1" max="5" value="5" step="1" aria-label="Max severity">
+              </div>
+            </div>
+
+            <!-- Status -->
+            <div class="filter-section">
+              <span class="filter-label">Status</span>
+              <div class="status-group">
+                <button class="status-btn active" data-status="all">All</button>
+                <button class="status-btn" data-status="Ongoing">Ongoing</button>
+                <button class="status-btn" data-status="Ended">Ended</button>
+                <button class="status-btn" data-status="Frozen">Frozen</button>
+              </div>
+            </div>
+
+            <!-- Reset -->
+            <div class="filter-section">
+              <button class="reset-filters-btn">Reset Filters</button>
+            </div>
+          </aside>
+
+          <!-- Main Content -->
+          <div class="hist-main">
+
+            <!-- Map Section -->
+            <div class="hist-map-section">
+              <div id="hist-map" role="application" aria-label="Historical conflict locations map"></div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="hist-data-panel">
+              <div class="panel-header">
+                <span class="panel-title">Historical Conflicts 1975–2025</span>
+                <span class="panel-count" id="hist-count">—</span>
+              </div>
+              <div class="data-table-wrap">
+                <table class="data-table" id="hist-table" aria-label="Historical conflicts database">
+                  <thead>
+                    <tr>
+                      <th data-sort="name">Conflict</th>
+                      <th data-sort="country">Country</th>
+                      <th data-sort="type">Type</th>
+                      <th data-sort="startYear" class="sort-desc tabular-nums">Years</th>
+                      <th data-sort="fatalities" class="tabular-nums">Fatalities</th>
+                      <th data-sort="severity">Severity</th>
+                      <th data-sort="status">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="hist-table-body">
+                    <!-- Skeleton rows -->
+                    <tr><td colspan="7"><div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:40%;"></div><div class="skeleton skeleton-cell" style="width:15%;"></div><div class="skeleton skeleton-cell" style="width:12%;height:22px;border-radius:99px;"></div><div class="skeleton skeleton-cell" style="width:8%;"></div><div class="skeleton skeleton-cell" style="width:8%;"></div><div class="skeleton skeleton-cell" style="width:6%;"></div><div class="skeleton skeleton-cell" style="width:7%;height:20px;border-radius:99px;"></div></div></td></tr>
+                    <tr><td colspan="7"><div class="skeleton-row"><div class="skeleton skeleton-cell" style="width:35%;"></div><div class="skeleton skeleton-cell" style="width:12%;"></div><div class="skeleton skeleton-cell" style="width:14%;height:22px;border-radius:99px;"></div><div class="skeleton skeleton-cell" style="width:8%;"></div><div class="skeleton skeleton-cell" style="width:7%;"></div><div class="skeleton skeleton-cell" style="width:6%;"></div><div class="skeleton skeleton-cell" style="width:8%;height:20px;border-radius:99px;"></div></div></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div><!-- /hist-main -->
+        </div><!-- /hist-layout -->
+      </div><!-- /historical panel -->
+
+      <!-- ===== TAB 3: ANALYTICS ===== -->
+      <div class="tab-panel" data-panel="analytics" role="tabpanel">
+        <div class="analytics-layout">
+
+          <!-- Stat Cards -->
+          <div class="stats-row" id="stats-cards">
+            <!-- Populated by JS -->
+            <div class="stat-card"><div class="stat-label">Live Zones</div><div class="skeleton" style="height:2rem;width:60%;margin-top:4px;border-radius:4px;"></div></div>
+            <div class="stat-card"><div class="stat-label">Ongoing</div><div class="skeleton" style="height:2rem;width:50%;margin-top:4px;border-radius:4px;"></div></div>
+            <div class="stat-card"><div class="stat-label">Countries</div><div class="skeleton" style="height:2rem;width:45%;margin-top:4px;border-radius:4px;"></div></div>
+            <div class="stat-card"><div class="stat-label">Fatalities</div><div class="skeleton" style="height:2rem;width:55%;margin-top:4px;border-radius:4px;"></div></div>
+          </div>
+
+          <!-- Charts Row 1 -->
+          <div class="charts-grid">
+            <div class="chart-card">
+              <div class="chart-card-title">Severity Distribution</div>
+              <div class="chart-container"><canvas id="chart-severity"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-title">Conflicts by 5-Year Period</div>
+              <div class="chart-container"><canvas id="chart-decade"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-title">Conflicts by Region</div>
+              <div class="chart-container"><canvas id="chart-region"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Charts Row 2 -->
+          <div class="charts-grid">
+            <div class="chart-card">
+              <div class="chart-card-title">Conflicts by Type</div>
+              <div class="chart-container-tall"><canvas id="chart-type"></canvas></div>
+            </div>
+            <div class="chart-card" style="grid-column: span 2;">
+              <div class="chart-card-title">Top 10 Deadliest Conflicts</div>
+              <div class="chart-container-tall"><canvas id="chart-deadliest"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Charts Row 3: Live Intelligence -->
+          <div class="charts-grid">
+            <div class="chart-card">
+              <div class="chart-card-title">Attack Types Distribution (Live)</div>
+              <div class="chart-container-tall"><canvas id="chart-attack-types"></canvas></div>
+            </div>
+            <div class="chart-card" style="grid-column: span 2;">
+              <div class="chart-card-title">Weapon Systems Deployed (Live)</div>
+              <div class="chart-container-tall"><canvas id="chart-weapons"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Attribution -->
+          <div style="text-align:center;padding:var(--space-8) 0;color:var(--color-text-faint);font-size:var(--text-xs);">
+            Historical data curated for CONFLICTWATCH. Live data from <a href="https://www.gdeltproject.org/" target="_blank" rel="noopener noreferrer" style="color:var(--color-primary);">GDELT Project</a>.
+            Fatality figures are estimates and may vary between sources.
+          </div>
+        </div>
+      </div><!-- /analytics panel -->
+
+    </main>
+  </div><!-- /dashboard -->
+
+  <!-- Scripts -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="conflicts-data.js"></script>
+  <script src="live-conflicts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
