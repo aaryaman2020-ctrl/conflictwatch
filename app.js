@@ -12,6 +12,7 @@ const STATE = {
   liveData: [],
   liveFilter: 'all',         // severity filter
   liveAttackFilter: 'all',   // attack type filter
+  zonesVisible: true,         // conflict zone overlay toggle
   histFilters: {
     country: '',
     types: [],
@@ -452,6 +453,246 @@ function renderLiveMarkers() {
     marker.bindPopup(buildLivePopup(d), { maxWidth: 340 });
     cluster.addLayer(marker);
   });
+
+  // Render conflict zone overlays
+  renderConflictZones();
+}
+
+// ============================================================
+// CONFLICT ZONE OVERLAYS
+// ============================================================
+
+/**
+ * Determine the worst severity for each country from live data.
+ */
+function getCountrySeverityMap() {
+  const countryMap = {}; // { countryName: { severity, conflictName, count, attackTypes } }
+  const severityRank = { critical: 4, high: 3, medium: 2, low: 1 };
+
+  const filtered = getFilteredLiveData();
+  filtered.forEach(d => {
+    const country = d.country || '';
+    if (!country) return;
+
+    const existing = countryMap[country];
+    const rank = severityRank[d.severity] || 0;
+
+    if (!existing || rank > (severityRank[existing.severity] || 0)) {
+      countryMap[country] = {
+        severity: d.severity,
+        conflictName: d.conflictName || '',
+        count: (existing ? existing.count : 0) + 1,
+        attackTypes: d.attackTypes || []
+      };
+    } else {
+      existing.count = (existing.count || 0) + 1;
+    }
+  });
+
+  return countryMap;
+}
+
+/**
+ * Render shaded polygons for countries with active conflicts.
+ */
+function renderConflictZones() {
+  const map = STATE.maps.live;
+  if (!map) return;
+
+  // Clear existing zone layers
+  if (STATE.layers.conflictZones) {
+    STATE.layers.conflictZones.clearLayers();
+  } else {
+    STATE.layers.conflictZones = L.layerGroup();
+    // Insert below markers
+    map.addLayer(STATE.layers.conflictZones);
+    STATE.layers.conflictZones.setZIndex?.(100);
+  }
+
+  if (!STATE.zonesVisible) return;
+
+  const zones = window.CONFLICT_ZONES;
+  if (!zones) return;
+
+  const countrySeverity = getCountrySeverityMap();
+
+  const zoneColors = {
+    critical: { fill: '#dc2626', weight: 2, opacity: 0.7, fillOpacity: 0.12 },
+    high:     { fill: '#f97316', weight: 1.5, opacity: 0.6, fillOpacity: 0.09 },
+    medium:   { fill: '#eab308', weight: 1.2, opacity: 0.5, fillOpacity: 0.07 },
+    low:      { fill: '#22c55e', weight: 1, opacity: 0.4, fillOpacity: 0.05 }
+  };
+
+  // Match zone names to live conflict countries
+  Object.entries(zones).forEach(([zoneName, coords]) => {
+    // Find matching country in live data
+    let match = countrySeverity[zoneName];
+
+    // Try partial matching if exact doesn't work
+    if (!match) {
+      const zoneNameLower = zoneName.toLowerCase();
+      for (const [country, data] of Object.entries(countrySeverity)) {
+        if (country.toLowerCase().includes(zoneNameLower) || zoneNameLower.includes(country.toLowerCase())) {
+          match = data;
+          break;
+        }
+      }
+    }
+
+    if (!match) return;
+
+    const style = zoneColors[match.severity] || zoneColors.low;
+    const latlngs = coords.map(c => [c[0], c[1]]);
+
+    const polygon = L.polygon(latlngs, {
+      color: style.fill,
+      weight: style.weight,
+      opacity: style.opacity,
+      fillColor: style.fill,
+      fillOpacity: style.fillOpacity,
+      dashArray: '6 4',
+      interactive: true,
+      className: 'conflict-zone-polygon'
+    });
+
+    // Tooltip on hover
+    const tooltipContent = `
+      <div style="font-weight:600;font-size:13px;margin-bottom:4px;">${zoneName}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+        ${badgeHTML(match.severity)}
+        <span style="font-size:11px;color:#9ca3af;">${match.count} active hotspot${match.count !== 1 ? 's' : ''}</span>
+      </div>
+      ${match.conflictName ? `<div style="font-size:11px;color:#d1d5db;">⚑ ${match.conflictName}</div>` : ''}
+    `;
+
+    polygon.bindTooltip(tooltipContent, {
+      sticky: true,
+      direction: 'top',
+      className: 'zone-tooltip',
+      offset: [0, -10]
+    });
+
+    // Hover highlight
+    polygon.on('mouseover', function() {
+      this.setStyle({ fillOpacity: style.fillOpacity * 2.5, weight: style.weight + 1 });
+    });
+    polygon.on('mouseout', function() {
+      this.setStyle({ fillOpacity: style.fillOpacity, weight: style.weight });
+    });
+
+    STATE.layers.conflictZones.addLayer(polygon);
+  });
+}
+
+/**
+ * Also render zones for the historical map.
+ */
+function renderHistConflictZones() {
+  const map = STATE.maps.hist;
+  if (!map) return;
+
+  if (STATE.layers.histConflictZones) {
+    STATE.layers.histConflictZones.clearLayers();
+  } else {
+    STATE.layers.histConflictZones = L.layerGroup();
+    map.addLayer(STATE.layers.histConflictZones);
+  }
+
+  const zones = window.CONFLICT_ZONES;
+  if (!zones) return;
+
+  const filtered = getFilteredHistData();
+
+  // Build country → worst severity map from historical data
+  const countrySeverity = {};
+  filtered.forEach(c => {
+    const country = c.country || '';
+    const existing = countrySeverity[country];
+    if (!existing || c.severity > existing.severity) {
+      countrySeverity[country] = {
+        severity: c.severity,
+        name: c.name,
+        count: (existing ? existing.count : 0) + 1,
+        status: c.status
+      };
+    } else if (existing) {
+      existing.count++;
+    }
+  });
+
+  const sevToLabel = { 5: 'critical', 4: 'high', 3: 'medium', 2: 'low', 1: 'low' };
+  const zoneColors = {
+    critical: { fill: '#dc2626', weight: 2, opacity: 0.6, fillOpacity: 0.10 },
+    high:     { fill: '#f97316', weight: 1.5, opacity: 0.5, fillOpacity: 0.08 },
+    medium:   { fill: '#eab308', weight: 1.2, opacity: 0.4, fillOpacity: 0.06 },
+    low:      { fill: '#22c55e', weight: 1, opacity: 0.3, fillOpacity: 0.04 }
+  };
+
+  Object.entries(zones).forEach(([zoneName, coords]) => {
+    let match = null;
+    const zoneNameLower = zoneName.toLowerCase();
+
+    for (const [country, data] of Object.entries(countrySeverity)) {
+      if (country.toLowerCase().includes(zoneNameLower) || zoneNameLower.includes(country.toLowerCase())) {
+        if (!match || data.severity > match.severity) {
+          match = data;
+        }
+      }
+    }
+
+    if (!match) return;
+
+    const sevLabel = sevToLabel[match.severity] || 'low';
+    const style = zoneColors[sevLabel] || zoneColors.low;
+    const latlngs = coords.map(c => [c[0], c[1]]);
+
+    const polygon = L.polygon(latlngs, {
+      color: style.fill,
+      weight: style.weight,
+      opacity: style.opacity,
+      fillColor: style.fill,
+      fillOpacity: style.fillOpacity,
+      dashArray: '6 4',
+      interactive: true,
+      className: 'conflict-zone-polygon'
+    });
+
+    polygon.bindTooltip(`
+      <div style="font-weight:600;font-size:13px;margin-bottom:4px;">${zoneName}</div>
+      <div style="font-size:11px;color:#d1d5db;">${match.count} historical conflict${match.count !== 1 ? 's' : ''}</div>
+      <div style="font-size:11px;color:#9ca3af;">Severity: ${match.severity}/5</div>
+    `, {
+      sticky: true,
+      direction: 'top',
+      className: 'zone-tooltip',
+      offset: [0, -10]
+    });
+
+    polygon.on('mouseover', function() {
+      this.setStyle({ fillOpacity: style.fillOpacity * 2.5, weight: style.weight + 1 });
+    });
+    polygon.on('mouseout', function() {
+      this.setStyle({ fillOpacity: style.fillOpacity, weight: style.weight });
+    });
+
+    STATE.layers.histConflictZones.addLayer(polygon);
+  });
+}
+
+/**
+ * Toggle zone visibility.
+ */
+function toggleConflictZones() {
+  STATE.zonesVisible = !STATE.zonesVisible;
+
+  const btn = document.getElementById('zone-toggle');
+  if (btn) btn.classList.toggle('active', STATE.zonesVisible);
+
+  if (STATE.zonesVisible) {
+    renderConflictZones();
+  } else if (STATE.layers.conflictZones) {
+    STATE.layers.conflictZones.clearLayers();
+  }
 }
 
 /**
@@ -504,6 +745,14 @@ function buildLivePopup(d) {
   if (d.region) metaParts.push(d.region);
   const metaStr = metaParts.length ? `<span class="popup-count">${metaParts.join(' · ')} · ${(d.count || 0).toLocaleString()} articles</span>` : '';
 
+  // View Full Briefing button — stores data on window for inline onclick
+  const briefingBtn = `<button class="popup-briefing-btn" onclick="(function(){var d=window._popupData_${d.name.replace(/[^a-zA-Z0-9]/g,'_')};if(d)openDetailPanel(d,'live');})()">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+    View Full Briefing
+  </button>`;
+  const safeKey = d.name.replace(/[^a-zA-Z0-9]/g, '_');
+  window[`_popupData_${safeKey}`] = d;
+
   return `
     <div class="popup-title">${d.name}</div>
     <div class="popup-meta">
@@ -517,6 +766,7 @@ function buildLivePopup(d) {
     ${casualtiesHTML}
     ${timelineHTML}
     ${linksHTML}
+    ${briefingBtn}
   `;
 }
 
@@ -586,7 +836,7 @@ function renderLiveTable() {
     </tr>`;
   }).join('');
 
-  // Row click → fly map
+  // Row click → fly map + open detail panel
   tbody.querySelectorAll('tr[data-lat]').forEach(row => {
     row.addEventListener('click', () => {
       const lat = parseFloat(row.dataset.lat);
@@ -594,6 +844,10 @@ function renderLiveTable() {
       if (STATE.maps.live && lat && lng) {
         STATE.maps.live.flyTo([lat, lng], 6, {animate: true, duration: 1});
       }
+      // Find matching data entry and open detail panel
+      const name = row.dataset.name;
+      const entry = STATE.liveData.find(d => d.name === name || (d.lat && Math.abs(d.lat - lat) < 0.001 && Math.abs(d.lng - lng) < 0.001));
+      if (entry) openDetailPanel(entry, 'live');
     });
   });
 }
@@ -651,6 +905,13 @@ function initLiveFilters() {
       }
     });
   }
+
+  // Zone toggle button
+  const zoneBtn = document.getElementById('zone-toggle');
+  if (zoneBtn) {
+    zoneBtn.classList.add('active'); // start active
+    zoneBtn.addEventListener('click', toggleConflictZones);
+  }
 }
 
 function showLiveLoading(show) {
@@ -700,6 +961,7 @@ function initHistMap() {
 
   renderHistMarkers();
   renderHistTable();
+  renderHistConflictZones();
 }
 
 function getFilteredHistData() {
@@ -739,6 +1001,8 @@ function renderHistMarkers() {
     const yearsStr    = c.startYear + (c.endYear ? `–${c.endYear}` : '–Present');
     const fatalStr    = c.fatalities > 0 ? formatNumber(c.fatalities) + ' est. fatalities' : 'Fatalities undocumented';
     const statusColor = c.status === 'Ongoing' ? 'var(--color-critical)' : c.status === 'Frozen' ? 'var(--color-medium)' : 'var(--color-low)';
+    const histSafeKey = c.name.replace(/[^a-zA-Z0-9]/g, '_');
+    window[`_histPopupData_${histSafeKey}`] = c;
 
     marker.bindPopup(`
       <div class="popup-title">${c.name}</div>
@@ -753,6 +1017,7 @@ function renderHistMarkers() {
       </div>
       <div class="popup-desc">${c.description}</div>
       <div style="font-size:var(--text-xs);color:var(--color-text-faint);border-top:1px solid var(--color-border);padding-top:var(--space-2);margin-top:var(--space-2);">Parties: ${partiesStr}</div>
+      <button class="popup-briefing-btn" onclick="(function(){var c=window._histPopupData_${histSafeKey};if(c)openDetailPanel(c,'historical');})()"><svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><path d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/><polyline points='14 2 14 8 20 8'/><line x1='16' y1='13' x2='8' y2='13'/><line x1='16' y1='17' x2='8' y2='17'/><polyline points='10 9 9 9 8 9'/></svg>View Full Briefing</button>
     `, { maxWidth: 320 });
 
     layer.addLayer(marker);
@@ -825,6 +1090,11 @@ function renderHistTable() {
       if (STATE.maps.hist && lat && lng) {
         STATE.maps.hist.flyTo([lat, lng], 5, {animate: true, duration: 1.2});
       }
+      // Find matching historical conflict and open detail panel
+      const entry = window.HISTORICAL_CONFLICTS.find(c =>
+        c.lat && Math.abs(c.lat - lat) < 0.001 && Math.abs(c.lng - lng) < 0.001
+      );
+      if (entry) openDetailPanel(entry, 'historical');
     });
   });
 }
@@ -947,6 +1217,7 @@ function initHistFilters() {
 function applyHistFilters() {
   renderHistMarkers();
   renderHistTable();
+  renderHistConflictZones();
 }
 
 function resetHistFilters() {
@@ -1406,6 +1677,442 @@ function renderWeaponsChart() {
 }
 
 // ============================================================
+// DETAIL PANEL — SLIDE-OUT BRIEFING
+// ============================================================
+
+/**
+ * Find related HISTORICAL_CONFLICTS by country or region (case-insensitive partial match).
+ */
+function findRelatedHistorical(country, region, excludeName) {
+  const all = window.HISTORICAL_CONFLICTS || [];
+  const cLow = (country || '').toLowerCase();
+  const rLow = (region || '').toLowerCase();
+
+  // First try country match
+  let matches = all.filter(c =>
+    c.name !== excludeName &&
+    cLow &&
+    c.country.toLowerCase().indexOf(cLow) !== -1
+  );
+
+  // Fallback to region match
+  if (matches.length === 0 && rLow) {
+    matches = all.filter(c =>
+      c.name !== excludeName &&
+      (c.region || '').toLowerCase().indexOf(rLow) !== -1
+    );
+  }
+
+  return matches;
+}
+
+/**
+ * Find related LIVE_CONFLICT_DATA by country or region.
+ */
+function findRelatedLive(country, region, excludeName) {
+  const all = window.LIVE_CONFLICT_DATA || [];
+  const cLow = (country || '').toLowerCase();
+  const rLow = (region || '').toLowerCase();
+
+  let matches = all.filter(d =>
+    d.name !== excludeName &&
+    cLow &&
+    (d.country || '').toLowerCase().indexOf(cLow) !== -1
+  );
+
+  if (matches.length === 0 && rLow) {
+    matches = all.filter(d =>
+      d.name !== excludeName &&
+      (d.region || '').toLowerCase().indexOf(rLow) !== -1
+    );
+  }
+
+  return matches;
+}
+
+/**
+ * Get weapon category color for border styling.
+ */
+function getWeaponColor(weaponName) {
+  const ws = window.WEAPON_SYSTEMS || {};
+  const sys = ws[weaponName];
+  if (!sys) return '#6b7280';
+  const typeColorMap = {
+    'Ballistic Missile': '#dc2626',
+    'Cruise Missile': '#f97316',
+    'Cruise Drone': '#f97316',
+    'Loitering Munition': '#eab308',
+    'Combat UAV': '#eab308',
+    'Combat UCAV': '#eab308',
+    'First-Person-View': '#84cc16',
+    'Guided FPV': '#84cc16',
+    'Guided Bomb': '#3b82f6',
+    'Small Diameter Bomb': '#3b82f6',
+    'Stealth Fighter': '#a855f7',
+    'Strike Fighter': '#a855f7',
+    'Multirole Fighter': '#a855f7',
+    'Stealth Bomber': '#dc2626',
+    'Air Defense': '#06b6d4',
+    'ABM System': '#06b6d4'
+  };
+  return typeColorMap[sys.type] || '#6b7280';
+}
+
+/**
+ * Get severity bar color.
+ */
+function getSevColor(sev) {
+  const sevColors = { 1: 'var(--color-low)', 2: 'var(--color-low)', 3: 'var(--color-medium)', 4: 'var(--color-high)', 5: 'var(--color-critical)' };
+  return sevColors[sev] || 'var(--color-text-faint)';
+}
+
+/**
+ * Build the HTML content for a LIVE conflict detail panel.
+ */
+function buildLiveDetailHTML(d) {
+  const cats = window.ATTACK_CATEGORIES || {};
+  const ws = window.WEAPON_SYSTEMS || {};
+
+  // --- Hero header ---
+  const conflictNameHTML = d.conflictName
+    ? `<div class="dp-hero-conflict-name"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h18v2H3V3zm0 8h18v2H3v-2zm0 8h18v2H3v-2z"/></svg>${d.conflictName}</div>`
+    : '';
+  const metaParts = [];
+  if (d.country) metaParts.push(d.country);
+  if (d.region && d.region !== d.country) metaParts.push(d.region);
+
+  const heroHTML = `
+    <div class="dp-hero">
+      <div class="dp-hero-location">${d.name}</div>
+      ${conflictNameHTML}
+      <div class="dp-hero-meta">
+        ${badgeHTML(d.severity)}
+        ${metaParts.length ? `<span class="dp-hero-geo"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>${metaParts.join(' &middot; ')}</span>` : ''}
+        <span style="font-size:var(--text-xs);color:var(--color-text-faint);">${(d.count || 0).toLocaleString()} articles</span>
+      </div>
+    </div>`;
+
+  // --- Situation Summary ---
+  const summaryHTML = `
+    <div class="dp-section">
+      <div class="dp-section-title">
+        <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        Situation Summary
+      </div>
+      <div class="dp-description">${d.description || 'No description available.'}</div>
+      ${d.casualties ? `<div class="dp-casualties"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${d.casualties}</div>` : ''}
+    </div>`;
+
+  // --- Attack Analysis ---
+  let attackHTML = '';
+  if (d.attackTypes && d.attackTypes.length > 0) {
+    const cards = d.attackTypes.map(at => {
+      const cat = cats[at] || {};
+      const color = cat.color || '#6b7280';
+      return `
+        <div class="dp-attack-card" style="border-left:3px solid ${color};">
+          <span class="dp-attack-icon">${cat.icon || '⚡'}</span>
+          <div>
+            <div class="dp-attack-name" style="color:${color};">${at}</div>
+            <div class="dp-attack-desc">${cat.desc || ''}</div>
+          </div>
+        </div>`;
+    }).join('');
+    attackHTML = `
+      <div class="dp-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Attack Analysis
+          <span class="dp-count-badge">${d.attackTypes.length}</span>
+        </div>
+        <div class="dp-attack-grid">${cards}</div>
+      </div>`;
+  }
+
+  // --- Weapons Intelligence ---
+  let weaponsHTML = '';
+  if (d.weapons && d.weapons.length > 0) {
+    const cards = d.weapons.map(wName => {
+      const sys = ws[wName];
+      const color = getWeaponColor(wName);
+      const meta = sys ? [
+        sys.type ? `<span class="dp-weapon-chip"><strong>Type</strong> ${sys.type}</span>` : '',
+        sys.origin ? `<span class="dp-weapon-chip"><strong>Origin</strong> ${sys.origin}</span>` : '',
+        sys.range ? `<span class="dp-weapon-chip"><strong>Range</strong> ${sys.range}</span>` : '',
+        sys.warhead ? `<span class="dp-weapon-chip"><strong>Warhead</strong> ${sys.warhead}</span>` : ''
+      ].filter(Boolean).join('') : '<span class="dp-weapon-chip">No specs available</span>';
+      return `
+        <div class="dp-weapon-card" style="border-left-color:${color};">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" style="margin-top:3px;flex-shrink:0;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <div>
+            <div class="dp-weapon-name">${wName}</div>
+            <div class="dp-weapon-meta">${meta}</div>
+          </div>
+        </div>`;
+    }).join('');
+    weaponsHTML = `
+      <div class="dp-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Weapons Intelligence
+          <span class="dp-count-badge">${d.weapons.length}</span>
+        </div>
+        <div class="dp-weapons-grid">${cards}</div>
+      </div>`;
+  }
+
+  // --- Operational Timeline ---
+  let timelineHTML = '';
+  if (d.dailyActivity && d.dailyActivity.length > 0) {
+    const events = d.dailyActivity.map(da => `
+      <div class="dp-timeline-event">
+        <div class="dp-timeline-date">${da.date}</div>
+        <div class="dp-timeline-text">${da.event}</div>
+      </div>`).join('');
+    timelineHTML = `
+      <div class="dp-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Operational Timeline
+          <span class="dp-count-badge">${d.dailyActivity.length}</span>
+        </div>
+        <div class="dp-timeline">${events}</div>
+      </div>`;
+  }
+
+  // --- Source Links ---
+  let sourcesHTML = '';
+  if (d.links && d.links.length > 0) {
+    const links = d.links.map(l => {
+      let domain = l.href;
+      try { domain = new URL(l.href).hostname.replace('www.', ''); } catch(e) {}
+      return `
+        <a href="${l.href}" class="dp-source-link" target="_blank" rel="noopener noreferrer">
+          <svg class="dp-source-link-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          <span><strong style="color:var(--color-text)">${domain}</strong><br>${l.text.substring(0, 70)}${l.text.length > 70 ? '...' : ''}</span>
+        </a>`;
+    }).join('');
+    sourcesHTML = `
+      <div class="dp-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Source Intelligence
+        </div>
+        <div class="dp-sources">${links}</div>
+      </div>`;
+  }
+
+  // --- Historical Context ---
+  const related = findRelatedHistorical(d.country, d.region, null);
+  let histContextHTML = '';
+  if (related.length > 0) {
+    const cards = related.slice(0, 5).map(c => {
+      const yearsStr = c.startYear + (c.endYear ? `–${c.endYear}` : '–Present');
+      const typeColor = TYPE_COLORS[c.type] || '#6b7280';
+      const sColor = getSevColor(c.severity);
+      const shortDesc = (c.description || '').substring(0, 150) + ((c.description || '').length > 150 ? '...' : '');
+      return `
+        <div class="dp-related-card" onclick="openDetailPanel(window.HISTORICAL_CONFLICTS.find(x=>x.name===\`${c.name.replace(/`/g, "'").replace(/"/g, '&quot;')}\`), 'historical')">
+          <div class="dp-related-card-header">
+            <div class="dp-related-card-name">${c.name}</div>
+            <span class="dp-related-card-years">${yearsStr}</span>
+          </div>
+          <div class="dp-related-card-meta">
+            <span style="font-size:var(--text-xs);padding:1px 6px;border-radius:var(--radius-full);background:${typeColor}22;color:${typeColor};border:1px solid ${typeColor}44;">${c.type}</span>
+            ${c.fatalities > 0 ? `<span class="dp-related-card-fatalities">${formatNumber(c.fatalities)} est. fatalities</span>` : ''}
+          </div>
+          <div class="dp-severity-bar">
+            <div class="dp-severity-bar-track"><div class="dp-severity-bar-fill" style="width:${c.severity * 20}%;background:${sColor};"></div></div>
+            <span class="dp-severity-label" style="color:${sColor};">${c.severity}/5</span>
+          </div>
+          ${shortDesc ? `<div class="dp-related-card-desc" style="margin-top:var(--space-2);">${shortDesc}</div>` : ''}
+        </div>`;
+    }).join('');
+    const contextLabel = d.country || d.region || 'Region';
+    histContextHTML = `
+      <div class="dp-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Historical Context: ${contextLabel}
+          <span class="dp-count-badge">${related.length}</span>
+        </div>
+        <div class="dp-related-grid">${cards}</div>
+      </div>`;
+  }
+
+  return heroHTML + summaryHTML + attackHTML + weaponsHTML + timelineHTML + sourcesHTML + histContextHTML;
+}
+
+/**
+ * Build the HTML content for a HISTORICAL conflict detail panel.
+ */
+function buildHistDetailHTML(c) {
+  const yearsStr = c.startYear + (c.endYear ? `–${c.endYear}` : '–Present');
+  const typeColor = TYPE_COLORS[c.type] || '#6b7280';
+  const statusColor = c.status === 'Ongoing' ? 'var(--color-critical)' : c.status === 'Frozen' ? 'var(--color-medium)' : 'var(--color-low)';
+  const sColor = getSevColor(c.severity);
+
+  // --- Hero ---
+  const heroHTML = `
+    <div class="dp-hero">
+      <div class="dp-hero-location">${c.name}</div>
+      <div class="dp-hero-meta">
+        <span style="font-size:var(--text-xs);padding:2px 8px;border-radius:var(--radius-full);background:${typeColor}22;color:${typeColor};border:1px solid ${typeColor}44;font-weight:600;">${c.type}</span>
+        <span class="badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${c.status}</span>
+      </div>
+      <div class="dp-hero-meta" style="margin-top:var(--space-2);">
+        <span class="dp-hero-geo"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>${c.country}</span>
+        ${c.region ? `<span class="dp-hero-geo">&middot; ${c.region}</span>` : ''}
+        <span style="font-size:var(--text-xs);color:var(--color-text-faint);">${yearsStr}</span>
+      </div>
+    </div>`;
+
+  // --- Overview ---
+  const overviewHTML = `
+    <div class="dp-section">
+      <div class="dp-section-title">
+        <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        Overview
+      </div>
+      <div class="dp-description">${c.description || 'No description available.'}</div>
+      ${c.fatalities > 0 ? `<div class="dp-casualties" style="margin-top:var(--space-3);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>${formatNumber(c.fatalities)} estimated fatalities</div>` : ''}
+      <div class="dp-severity-bar" style="margin-top:var(--space-3);">
+        <span style="font-size:var(--text-xs);color:var(--color-text-faint);text-transform:uppercase;letter-spacing:0.05em;">Severity</span>
+        <div class="dp-severity-bar-track" style="max-width:100px;"><div class="dp-severity-bar-fill" style="width:${c.severity * 20}%;background:${sColor};"></div></div>
+        <span class="dp-severity-label" style="color:${sColor};">${c.severity} / 5</span>
+      </div>
+    </div>`;
+
+  // --- Key Parties ---
+  let partiesHTML = '';
+  if (c.parties && c.parties.length > 0) {
+    const chips = c.parties.map(p => `<span class="dp-party-chip">${p}</span>`).join('');
+    partiesHTML = `
+      <div class="dp-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Key Parties
+          <span class="dp-count-badge">${c.parties.length}</span>
+        </div>
+        <div class="dp-parties">${chips}</div>
+      </div>`;
+  }
+
+  // --- Related Historical Conflicts ---
+  const related = findRelatedHistorical(c.country, c.region, c.name);
+  let relatedHTML = '';
+  if (related.length > 0) {
+    const cards = related.slice(0, 5).map(r => {
+      const rYears = r.startYear + (r.endYear ? `–${r.endYear}` : '–Present');
+      const rTypeColor = TYPE_COLORS[r.type] || '#6b7280';
+      const rSColor = getSevColor(r.severity);
+      const shortDesc = (r.description || '').substring(0, 130) + ((r.description || '').length > 130 ? '...' : '');
+      return `
+        <div class="dp-related-card" onclick="openDetailPanel(window.HISTORICAL_CONFLICTS.find(x=>x.name===\`${r.name.replace(/`/g, "'").replace(/"/g, '&quot;')}\`), 'historical')">
+          <div class="dp-related-card-header">
+            <div class="dp-related-card-name">${r.name}</div>
+            <span class="dp-related-card-years">${rYears}</span>
+          </div>
+          <div class="dp-related-card-meta">
+            <span style="font-size:var(--text-xs);padding:1px 6px;border-radius:var(--radius-full);background:${rTypeColor}22;color:${rTypeColor};border:1px solid ${rTypeColor}44;">${r.type}</span>
+            ${r.fatalities > 0 ? `<span class="dp-related-card-fatalities">${formatNumber(r.fatalities)} est. fatalities</span>` : ''}
+          </div>
+          <div class="dp-severity-bar">
+            <div class="dp-severity-bar-track"><div class="dp-severity-bar-fill" style="width:${r.severity * 20}%;background:${rSColor};"></div></div>
+            <span class="dp-severity-label" style="color:${rSColor};">${r.severity}/5</span>
+          </div>
+          ${shortDesc ? `<div class="dp-related-card-desc" style="margin-top:var(--space-2);">${shortDesc}</div>` : ''}
+        </div>`;
+    }).join('');
+    relatedHTML = `
+      <div class="dp-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Related Conflicts: ${c.country}
+          <span class="dp-count-badge">${related.length}</span>
+        </div>
+        <div class="dp-related-grid">${cards}</div>
+      </div>`;
+  }
+
+  // --- Current Status Connection ---
+  const liveMatches = findRelatedLive(c.country, c.region, null);
+  let liveHTML = '';
+  if (liveMatches.length > 0) {
+    const items = liveMatches.slice(0, 4).map(ld => `
+      <div class="dp-live-activity-item">
+        <span class="dp-live-dot"></span>
+        <span>${badgeHTML(ld.severity)} <strong style="color:var(--color-text)">${ld.name}</strong> — ${(ld.conflictName || ld.description || '').substring(0, 80)}${(ld.conflictName || ld.description || '').length > 80 ? '...' : ''}</span>
+      </div>`).join('');
+    liveHTML = `
+      <div class="dp-section">
+        <div class="dp-section-title">
+          <span class="dot-pulse" style="width:8px;height:8px;"></span>
+          Current Activity in ${c.country}
+          <span class="dp-count-badge">${liveMatches.length}</span>
+        </div>
+        <div class="dp-live-activity">
+          <div class="dp-live-activity-header">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Active Conflict Zones
+          </div>
+          ${items}
+        </div>
+      </div>`;
+  }
+
+  return heroHTML + overviewHTML + partiesHTML + relatedHTML + liveHTML;
+}
+
+/**
+ * Open the detail panel for a given conflict data object.
+ * @param {Object} data - conflict data (live or historical)
+ * @param {'live'|'historical'} type
+ */
+function openDetailPanel(data, type) {
+  if (!data) return;
+  const panel = document.getElementById('detail-panel');
+  const overlay = document.getElementById('detail-overlay');
+  const content = document.getElementById('detail-panel-content');
+  if (!panel || !overlay || !content) return;
+
+  content.innerHTML = type === 'live'
+    ? buildLiveDetailHTML(data)
+    : buildHistDetailHTML(data);
+
+  content.scrollTop = 0;
+  panel.classList.add('open');
+  overlay.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+/**
+ * Close the detail panel.
+ */
+function closeDetailPanel() {
+  const panel = document.getElementById('detail-panel');
+  const overlay = document.getElementById('detail-overlay');
+  if (panel) panel.classList.remove('open');
+  if (overlay) overlay.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+/**
+ * Initialize detail panel listeners (close button, overlay, Escape key).
+ */
+function initDetailPanel() {
+  const closeBtn = document.getElementById('detail-close-btn');
+  const overlay = document.getElementById('detail-overlay');
+
+  if (closeBtn) closeBtn.addEventListener('click', closeDetailPanel);
+  if (overlay) overlay.addEventListener('click', closeDetailPanel);
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeDetailPanel();
+  });
+}
+
+// ============================================================
 // INITIALIZATION
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -1415,6 +2122,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initLiveTableSort();
   initHistFilters();
   initHistTableSort();
+  initDetailPanel();
 
   // Initialize both maps eagerly — all panels are laid out now (visibility-based tabs)
   initLiveMap();
