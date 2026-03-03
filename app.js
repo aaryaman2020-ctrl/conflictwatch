@@ -29,7 +29,8 @@ const STATE = {
   lastUpdated: null,
   maps: {},
   layers: {},
-  charts: {}
+  charts: {},
+  countriesGeoJSON: null  // cached GeoJSON data for choropleth map
 };
 
 // ============================================================
@@ -459,33 +460,113 @@ function renderLiveMarkers() {
 }
 
 // ============================================================
-// CONFLICT ZONE OVERLAYS
+// CONFLICT ZONE OVERLAYS — GeoJSON Choropleth
 // ============================================================
 
 /**
+ * Country name aliases: GeoJSON name → array of alternate names used in conflict data.
+ */
+const COUNTRY_ALIASES = {
+  'United States of America': ['USA', 'United States', 'US', 'U.S.', 'U.S.A.'],
+  'United Kingdom': ['UK', 'Britain', 'Great Britain', 'England'],
+  'United Arab Emirates': ['UAE', 'U.A.E.'],
+  'Dem. Rep. Congo': ['DR Congo', 'DRC', 'Democratic Republic of the Congo', 'Congo, Dem. Rep.', 'Zaire'],
+  'Central African Rep.': ['Central African Republic', 'CAR'],
+  'S. Sudan': ['South Sudan'],
+  "Côte d'Ivoire": ['Ivory Coast', 'Cote d\'Ivoire', "Cote d'Ivoire"],
+  'eSwatini': ['Swaziland'],
+  'Bosnia and Herz.': ['Bosnia', 'Bosnia and Herzegovina', 'Bosnia & Herzegovina'],
+  'Macedonia': ['North Macedonia', 'FYROM'],
+  'Czech Rep.': ['Czech Republic', 'Czechia'],
+  'Dominican Rep.': ['Dominican Republic'],
+  'Eq. Guinea': ['Equatorial Guinea'],
+  'W. Sahara': ['Western Sahara'],
+  'Congo': ['Republic of Congo', 'Republic of the Congo', 'Congo-Brazzaville'],
+  'Lao PDR': ['Laos'],
+  'Korea': ['South Korea'],
+  'Dem. Rep. Korea': ['North Korea', 'DPRK'],
+  'Myanmar': ['Burma'],
+  'Iran': ['Islamic Republic of Iran'],
+  'Syria': ['Syrian Arab Republic'],
+  'Russia': ['Russian Federation'],
+  'Tanzania': ['United Republic of Tanzania'],
+  'Venezuela': ['Venezuela, RB'],
+  'Yemen': ['Republic of Yemen'],
+  'Libya': ['Libyan Arab Jamahiriya'],
+  'Moldova': ['Republic of Moldova'],
+  'Palestine': ['Palestinian Territory', 'West Bank', 'Gaza', 'Gaza Strip'],
+  'Israel': ['State of Israel'],
+  'Serbia': ['Republic of Serbia'],
+  'Kosovo': ['Republic of Kosovo'],
+  'Somaliland': ['Somaliland Region'],
+  'N. Cyprus': ['Northern Cyprus'],
+  'Falkland Is.': ['Falkland Islands'],
+  'Papua New Guinea': ['PNG']
+};
+
+/** Build reverse lookup: alternate name (lowercase) → canonical GeoJSON name */
+const _ALIAS_LOOKUP = {};
+Object.entries(COUNTRY_ALIASES).forEach(([canonical, aliases]) => {
+  aliases.forEach(a => { _ALIAS_LOOKUP[a.toLowerCase()] = canonical; });
+  _ALIAS_LOOKUP[canonical.toLowerCase()] = canonical;
+});
+
+/**
+ * Normalize a country name from conflict data to match GeoJSON feature name.
+ * Returns canonical GeoJSON name if found, or original name.
+ */
+function normalizeCountryName(name) {
+  if (!name) return '';
+  const lower = name.toLowerCase().trim();
+  return _ALIAS_LOOKUP[lower] || name;
+}
+
+/**
+ * Load the countries GeoJSON once and cache it in STATE.
+ */
+async function loadCountriesGeoJSON() {
+  if (STATE.countriesGeoJSON) return STATE.countriesGeoJSON;
+  try {
+    const resp = await fetch('countries.geojson');
+    STATE.countriesGeoJSON = await resp.json();
+  } catch(e) {
+    console.warn('Failed to load countries GeoJSON:', e);
+    STATE.countriesGeoJSON = { type: 'FeatureCollection', features: [] };
+  }
+  return STATE.countriesGeoJSON;
+}
+
+/**
  * Determine the worst severity for each country from live data.
+ * Returns { normalizedCountryName: { severity, conflicts: [...], count, attackTypes } }
  */
 function getCountrySeverityMap() {
-  const countryMap = {}; // { countryName: { severity, conflictName, count, attackTypes } }
+  const countryMap = {};
   const severityRank = { critical: 4, high: 3, medium: 2, low: 1 };
 
   const filtered = getFilteredLiveData();
   filtered.forEach(d => {
-    const country = d.country || '';
-    if (!country) return;
+    const rawCountry = d.country || '';
+    if (!rawCountry) return;
+    const country = normalizeCountryName(rawCountry);
 
     const existing = countryMap[country];
     const rank = severityRank[d.severity] || 0;
 
-    if (!existing || rank > (severityRank[existing.severity] || 0)) {
+    if (!existing) {
       countryMap[country] = {
         severity: d.severity,
-        conflictName: d.conflictName || '',
-        count: (existing ? existing.count : 0) + 1,
+        conflicts: [d],
+        count: 1,
         attackTypes: d.attackTypes || []
       };
     } else {
-      existing.count = (existing.count || 0) + 1;
+      existing.count++;
+      existing.conflicts.push(d);
+      if (rank > (severityRank[existing.severity] || 0)) {
+        existing.severity = d.severity;
+        existing.attackTypes = d.attackTypes || [];
+      }
     }
   });
 
@@ -493,194 +574,313 @@ function getCountrySeverityMap() {
 }
 
 /**
- * Render shaded polygons for countries with active conflicts.
+ * Style function for a GeoJSON feature on the live map.
  */
-function renderConflictZones() {
+function getLiveFeatureStyle(feature, countrySeverity) {
+  const name = feature.properties && feature.properties.name;
+  const match = countrySeverity[name];
+
+  if (!match) {
+    return {
+      color: '#374151',
+      weight: 0.4,
+      opacity: 0.5,
+      fillColor: '#1f2937',
+      fillOpacity: 0.0,
+      className: 'country-no-conflict'
+    };
+  }
+
+  const colors = {
+    critical: '#dc2626',
+    high:     '#f97316',
+    medium:   '#eab308',
+    low:      '#22c55e'
+  };
+  const color = colors[match.severity] || '#6b7280';
+
+  return {
+    color: color,
+    weight: 1.2,
+    opacity: 0.8,
+    fillColor: color,
+    fillOpacity: 0.22,
+    className: 'conflict-zone-polygon'
+  };
+}
+
+/**
+ * Build popup HTML for clicking a conflict country on the live map.
+ */
+function buildCountryPopupHTML(countryName, matchData) {
+  const conflicts = matchData.conflicts || [];
+  const listItems = conflicts.map(c => {
+    const sev = c.severity || 'low';
+    const colors = { critical: '#dc2626', high: '#f97316', medium: '#eab308', low: '#22c55e' };
+    const col = colors[sev] || '#6b7280';
+    return `<li class="country-popup-conflict-item" data-conflict-name="${(c.name || '').replace(/"/g,'&quot;')}">
+      <span class="country-popup-sev-dot" style="background:${col};"></span>
+      <span class="country-popup-conflict-name">${c.name || c.conflict || 'Unknown conflict'}</span>
+      <span class="country-popup-sev-label" style="color:${col};">${sev.toUpperCase()}</span>
+    </li>`;
+  }).join('');
+
+  return `<div class="country-info-popup">
+    <div class="country-popup-header">
+      <strong>${countryName}</strong>
+      <span class="country-popup-count">${matchData.count} active hotspot${matchData.count !== 1 ? 's' : ''}</span>
+    </div>
+    <ul class="country-popup-list">${listItems}</ul>
+    <div class="country-popup-hint">Click a conflict to view details</div>
+  </div>`;
+}
+
+/**
+ * Render choropleth conflict zones on the live map using Natural Earth GeoJSON.
+ */
+async function renderConflictZones() {
   const map = STATE.maps.live;
   if (!map) return;
 
-  // Clear existing zone layers
+  // Remove old GeoJSON layer if present
   if (STATE.layers.conflictZones) {
-    STATE.layers.conflictZones.clearLayers();
-  } else {
-    STATE.layers.conflictZones = L.layerGroup();
-    // Insert below markers
-    map.addLayer(STATE.layers.conflictZones);
-    STATE.layers.conflictZones.setZIndex?.(100);
+    map.removeLayer(STATE.layers.conflictZones);
+    STATE.layers.conflictZones = null;
   }
 
   if (!STATE.zonesVisible) return;
 
-  const zones = window.CONFLICT_ZONES;
-  if (!zones) return;
-
+  const geoData = await loadCountriesGeoJSON();
   const countrySeverity = getCountrySeverityMap();
 
-  const zoneColors = {
-    critical: { fill: '#dc2626', weight: 2, opacity: 0.7, fillOpacity: 0.12 },
-    high:     { fill: '#f97316', weight: 1.5, opacity: 0.6, fillOpacity: 0.09 },
-    medium:   { fill: '#eab308', weight: 1.2, opacity: 0.5, fillOpacity: 0.07 },
-    low:      { fill: '#22c55e', weight: 1, opacity: 0.4, fillOpacity: 0.05 }
-  };
+  const geoLayer = L.geoJSON(geoData, {
+    style: feature => getLiveFeatureStyle(feature, countrySeverity),
 
-  // Match zone names to live conflict countries
-  Object.entries(zones).forEach(([zoneName, coords]) => {
-    // Find matching country in live data
-    let match = countrySeverity[zoneName];
+    onEachFeature: function(feature, layer) {
+      const name = feature.properties && feature.properties.name;
+      const match = countrySeverity[name];
 
-    // Try partial matching if exact doesn't work
-    if (!match) {
-      const zoneNameLower = zoneName.toLowerCase();
-      for (const [country, data] of Object.entries(countrySeverity)) {
-        if (country.toLowerCase().includes(zoneNameLower) || zoneNameLower.includes(country.toLowerCase())) {
-          match = data;
-          break;
-        }
+      if (match) {
+        // Hover highlight
+        layer.on('mouseover', function(e) {
+          const s = this.options;
+          this.setStyle({ fillOpacity: Math.min(s.fillOpacity * 2.2, 0.55), weight: 2.2 });
+          if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) this.bringToFront();
+          L.tooltip({ sticky: true, direction: 'top', className: 'zone-tooltip', offset: [0, -8] })
+            .setContent(`<strong>${name}</strong> &nbsp;${badgeHTML(match.severity)}<br><span style="font-size:11px;color:#9ca3af;">${match.count} active hotspot${match.count !== 1 ? 's' : ''}</span>`)
+            .setLatLng(e.latlng)
+            .addTo(map);
+          layer._zoneTooltip = map._layers[Object.keys(map._layers).pop()];
+        });
+        layer.on('mouseout', function() {
+          geoLayer.resetStyle(this);
+          if (layer._zoneTooltip) { map.removeLayer(layer._zoneTooltip); layer._zoneTooltip = null; }
+        });
+        layer.on('mousemove', function(e) {
+          if (layer._zoneTooltip) layer._zoneTooltip.setLatLng(e.latlng);
+        });
+
+        // Click: zoom + open country briefing in detail panel
+        layer.on('click', function(e) {
+          L.DomEvent.stopPropagation(e);
+          if (layer._zoneTooltip) { map.removeLayer(layer._zoneTooltip); layer._zoneTooltip = null; }
+
+          // Zoom to country bounds
+          try { map.fitBounds(layer.getBounds(), { padding: [40, 40], maxZoom: 6 }); } catch(_) {}
+
+          // Open country intelligence briefing in detail panel
+          openCountryBriefing(name, match, 'live');
+        });
+      } else {
+        // Non-conflict country: just show name on hover
+        layer.on('mouseover', function(e) {
+          this.setStyle({ fillOpacity: 0.06, weight: 0.8 });
+          L.tooltip({ sticky: true, direction: 'top', className: 'zone-tooltip zone-tooltip-muted', offset: [0, -6] })
+            .setContent(`<span style="font-size:12px;">${name}</span>`)
+            .setLatLng(e.latlng)
+            .addTo(map);
+          layer._zoneTooltip = map._layers[Object.keys(map._layers).pop()];
+        });
+        layer.on('mouseout', function() {
+          geoLayer.resetStyle(this);
+          if (layer._zoneTooltip) { map.removeLayer(layer._zoneTooltip); layer._zoneTooltip = null; }
+        });
+        layer.on('mousemove', function(e) {
+          if (layer._zoneTooltip) layer._zoneTooltip.setLatLng(e.latlng);
+        });
       }
     }
-
-    if (!match) return;
-
-    const style = zoneColors[match.severity] || zoneColors.low;
-    const latlngs = coords.map(c => [c[0], c[1]]);
-
-    const polygon = L.polygon(latlngs, {
-      color: style.fill,
-      weight: style.weight,
-      opacity: style.opacity,
-      fillColor: style.fill,
-      fillOpacity: style.fillOpacity,
-      dashArray: '6 4',
-      interactive: true,
-      className: 'conflict-zone-polygon'
-    });
-
-    // Tooltip on hover
-    const tooltipContent = `
-      <div style="font-weight:600;font-size:13px;margin-bottom:4px;">${zoneName}</div>
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-        ${badgeHTML(match.severity)}
-        <span style="font-size:11px;color:#9ca3af;">${match.count} active hotspot${match.count !== 1 ? 's' : ''}</span>
-      </div>
-      ${match.conflictName ? `<div style="font-size:11px;color:#d1d5db;">⚑ ${match.conflictName}</div>` : ''}
-    `;
-
-    polygon.bindTooltip(tooltipContent, {
-      sticky: true,
-      direction: 'top',
-      className: 'zone-tooltip',
-      offset: [0, -10]
-    });
-
-    // Hover highlight
-    polygon.on('mouseover', function() {
-      this.setStyle({ fillOpacity: style.fillOpacity * 2.5, weight: style.weight + 1 });
-    });
-    polygon.on('mouseout', function() {
-      this.setStyle({ fillOpacity: style.fillOpacity, weight: style.weight });
-    });
-
-    STATE.layers.conflictZones.addLayer(polygon);
   });
+
+  // Add below marker cluster so markers always appear on top
+  geoLayer.addTo(map);
+  if (STATE.layers.markers) STATE.layers.markers.bringToFront();
+
+  STATE.layers.conflictZones = geoLayer;
 }
 
 /**
- * Also render zones for the historical map.
+ * Style function for a GeoJSON feature on the historical map.
  */
-function renderHistConflictZones() {
+function getHistFeatureStyle(feature, countrySeverity) {
+  const name = feature.properties && feature.properties.name;
+  const match = countrySeverity[name];
+
+  if (!match) {
+    return {
+      color: '#374151',
+      weight: 0.4,
+      opacity: 0.5,
+      fillColor: '#1f2937',
+      fillOpacity: 0.0,
+      className: 'country-no-conflict'
+    };
+  }
+
+  // Map numeric severity (1–5) to color
+  const sevToColor = { 5: '#dc2626', 4: '#f97316', 3: '#eab308', 2: '#22c55e', 1: '#22c55e' };
+  const color = sevToColor[match.severity] || '#6b7280';
+
+  return {
+    color: color,
+    weight: 1.2,
+    opacity: 0.8,
+    fillColor: color,
+    fillOpacity: 0.20,
+    className: 'conflict-zone-polygon'
+  };
+}
+
+/**
+ * Build popup HTML for clicking a conflict country on the historical map.
+ */
+function buildHistCountryPopupHTML(countryName, matchData) {
+  const conflicts = matchData.conflicts || [];
+  const sevToLabel = { 5: 'critical', 4: 'high', 3: 'medium', 2: 'low', 1: 'low' };
+  const sevToColor = { 5: '#dc2626', 4: '#f97316', 3: '#eab308', 2: '#22c55e', 1: '#22c55e' };
+
+  const listItems = conflicts.map(c => {
+    const col = sevToColor[c.severity] || '#6b7280';
+    const label = sevToLabel[c.severity] || 'low';
+    const years = c.endYear ? `${c.startYear}–${c.endYear}` : `${c.startYear}–present`;
+    return `<li class="country-popup-conflict-item hist" data-conflict-idx="${c._popupIdx}">
+      <span class="country-popup-sev-dot" style="background:${col};"></span>
+      <span class="country-popup-conflict-name">${c.name}</span>
+      <span class="country-popup-years">${years}</span>
+      <span class="country-popup-sev-label" style="color:${col};">${label.toUpperCase()}</span>
+    </li>`;
+  }).join('');
+
+  return `<div class="country-info-popup">
+    <div class="country-popup-header">
+      <strong>${countryName}</strong>
+      <span class="country-popup-count">${matchData.count} conflict${matchData.count !== 1 ? 's' : ''}</span>
+    </div>
+    <ul class="country-popup-list">${listItems}</ul>
+    <div class="country-popup-hint">Click a conflict to view details</div>
+  </div>`;
+}
+
+/**
+ * Render choropleth conflict zones on the historical map using Natural Earth GeoJSON.
+ */
+async function renderHistConflictZones() {
   const map = STATE.maps.hist;
   if (!map) return;
 
+  // Remove old GeoJSON layer
   if (STATE.layers.histConflictZones) {
-    STATE.layers.histConflictZones.clearLayers();
-  } else {
-    STATE.layers.histConflictZones = L.layerGroup();
-    map.addLayer(STATE.layers.histConflictZones);
+    map.removeLayer(STATE.layers.histConflictZones);
+    STATE.layers.histConflictZones = null;
   }
 
-  const zones = window.CONFLICT_ZONES;
-  if (!zones) return;
-
+  const geoData = await loadCountriesGeoJSON();
   const filtered = getFilteredHistData();
 
-  // Build country → worst severity map from historical data
+  // Build country → worst severity map, collecting all conflicts per country
   const countrySeverity = {};
-  filtered.forEach(c => {
-    const country = c.country || '';
+  filtered.forEach((c, idx) => {
+    const rawCountry = c.country || '';
+    if (!rawCountry) return;
+    const country = normalizeCountryName(rawCountry);
+    const cWithIdx = Object.assign({}, c, { _popupIdx: idx });
+
     const existing = countrySeverity[country];
-    if (!existing || c.severity > existing.severity) {
-      countrySeverity[country] = {
-        severity: c.severity,
-        name: c.name,
-        count: (existing ? existing.count : 0) + 1,
-        status: c.status
-      };
-    } else if (existing) {
+    if (!existing) {
+      countrySeverity[country] = { severity: c.severity, count: 1, conflicts: [cWithIdx] };
+    } else {
       existing.count++;
+      existing.conflicts.push(cWithIdx);
+      if (c.severity > existing.severity) existing.severity = c.severity;
     }
   });
 
-  const sevToLabel = { 5: 'critical', 4: 'high', 3: 'medium', 2: 'low', 1: 'low' };
-  const zoneColors = {
-    critical: { fill: '#dc2626', weight: 2, opacity: 0.6, fillOpacity: 0.10 },
-    high:     { fill: '#f97316', weight: 1.5, opacity: 0.5, fillOpacity: 0.08 },
-    medium:   { fill: '#eab308', weight: 1.2, opacity: 0.4, fillOpacity: 0.06 },
-    low:      { fill: '#22c55e', weight: 1, opacity: 0.3, fillOpacity: 0.04 }
-  };
+  const histGeoLayer = L.geoJSON(geoData, {
+    style: feature => getHistFeatureStyle(feature, countrySeverity),
 
-  Object.entries(zones).forEach(([zoneName, coords]) => {
-    let match = null;
-    const zoneNameLower = zoneName.toLowerCase();
+    onEachFeature: function(feature, layer) {
+      const name = feature.properties && feature.properties.name;
+      const match = countrySeverity[name];
+      const sevToColor = { 5: '#dc2626', 4: '#f97316', 3: '#eab308', 2: '#22c55e', 1: '#22c55e' };
+      const sevToLabel = { 5: 'critical', 4: 'high', 3: 'medium', 2: 'low', 1: 'low' };
 
-    for (const [country, data] of Object.entries(countrySeverity)) {
-      if (country.toLowerCase().includes(zoneNameLower) || zoneNameLower.includes(country.toLowerCase())) {
-        if (!match || data.severity > match.severity) {
-          match = data;
-        }
+      if (match) {
+        layer.on('mouseover', function(e) {
+          const s = this.options;
+          this.setStyle({ fillOpacity: Math.min(s.fillOpacity * 2.2, 0.55), weight: 2.2 });
+          if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) this.bringToFront();
+          const col = sevToColor[match.severity] || '#6b7280';
+          const lbl = sevToLabel[match.severity] || 'low';
+          L.tooltip({ sticky: true, direction: 'top', className: 'zone-tooltip', offset: [0, -8] })
+            .setContent(`<strong>${name}</strong> &nbsp;<span class="badge badge-${lbl}">${lbl.toUpperCase()}</span><br><span style="font-size:11px;color:#9ca3af;">${match.count} historical conflict${match.count !== 1 ? 's' : ''} &bull; Severity ${match.severity}/5</span>`)
+            .setLatLng(e.latlng)
+            .addTo(map);
+          layer._zoneTooltip = map._layers[Object.keys(map._layers).pop()];
+        });
+        layer.on('mouseout', function() {
+          histGeoLayer.resetStyle(this);
+          if (layer._zoneTooltip) { map.removeLayer(layer._zoneTooltip); layer._zoneTooltip = null; }
+        });
+        layer.on('mousemove', function(e) {
+          if (layer._zoneTooltip) layer._zoneTooltip.setLatLng(e.latlng);
+        });
+
+        layer.on('click', function(e) {
+          L.DomEvent.stopPropagation(e);
+          if (layer._zoneTooltip) { map.removeLayer(layer._zoneTooltip); layer._zoneTooltip = null; }
+          try { map.fitBounds(layer.getBounds(), { padding: [40, 40], maxZoom: 6 }); } catch(_) {}
+
+          // Open country intelligence briefing in detail panel
+          openCountryBriefing(name, match, 'historical');
+        });
+      } else {
+        layer.on('mouseover', function(e) {
+          this.setStyle({ fillOpacity: 0.06, weight: 0.8 });
+          L.tooltip({ sticky: true, direction: 'top', className: 'zone-tooltip zone-tooltip-muted', offset: [0, -6] })
+            .setContent(`<span style="font-size:12px;">${name}</span>`)
+            .setLatLng(e.latlng)
+            .addTo(map);
+          layer._zoneTooltip = map._layers[Object.keys(map._layers).pop()];
+        });
+        layer.on('mouseout', function() {
+          histGeoLayer.resetStyle(this);
+          if (layer._zoneTooltip) { map.removeLayer(layer._zoneTooltip); layer._zoneTooltip = null; }
+        });
+        layer.on('mousemove', function(e) {
+          if (layer._zoneTooltip) layer._zoneTooltip.setLatLng(e.latlng);
+        });
       }
     }
-
-    if (!match) return;
-
-    const sevLabel = sevToLabel[match.severity] || 'low';
-    const style = zoneColors[sevLabel] || zoneColors.low;
-    const latlngs = coords.map(c => [c[0], c[1]]);
-
-    const polygon = L.polygon(latlngs, {
-      color: style.fill,
-      weight: style.weight,
-      opacity: style.opacity,
-      fillColor: style.fill,
-      fillOpacity: style.fillOpacity,
-      dashArray: '6 4',
-      interactive: true,
-      className: 'conflict-zone-polygon'
-    });
-
-    polygon.bindTooltip(`
-      <div style="font-weight:600;font-size:13px;margin-bottom:4px;">${zoneName}</div>
-      <div style="font-size:11px;color:#d1d5db;">${match.count} historical conflict${match.count !== 1 ? 's' : ''}</div>
-      <div style="font-size:11px;color:#9ca3af;">Severity: ${match.severity}/5</div>
-    `, {
-      sticky: true,
-      direction: 'top',
-      className: 'zone-tooltip',
-      offset: [0, -10]
-    });
-
-    polygon.on('mouseover', function() {
-      this.setStyle({ fillOpacity: style.fillOpacity * 2.5, weight: style.weight + 1 });
-    });
-    polygon.on('mouseout', function() {
-      this.setStyle({ fillOpacity: style.fillOpacity, weight: style.weight });
-    });
-
-    STATE.layers.histConflictZones.addLayer(polygon);
   });
+
+  histGeoLayer.addTo(map);
+  if (STATE.layers.histMarkers) STATE.layers.histMarkers.bringToFront();
+
+  STATE.layers.histConflictZones = histGeoLayer;
 }
 
 /**
- * Toggle zone visibility.
+ * Toggle zone visibility on the live map.
  */
 function toggleConflictZones() {
   STATE.zonesVisible = !STATE.zonesVisible;
@@ -690,8 +890,12 @@ function toggleConflictZones() {
 
   if (STATE.zonesVisible) {
     renderConflictZones();
-  } else if (STATE.layers.conflictZones) {
-    STATE.layers.conflictZones.clearLayers();
+  } else {
+    if (STATE.layers.conflictZones) {
+      const map = STATE.maps.live;
+      if (map) map.removeLayer(STATE.layers.conflictZones);
+      STATE.layers.conflictZones = null;
+    }
   }
 }
 
@@ -2062,6 +2266,500 @@ function buildHistDetailHTML(c) {
   }
 
   return heroHTML + overviewHTML + partiesHTML + relatedHTML + liveHTML;
+}
+
+// ============================================================
+// COUNTRY INTELLIGENCE BRIEFING
+// ============================================================
+
+/**
+ * Build the HTML for a LIVE country intelligence briefing.
+ * @param {string} countryName
+ * @param {Object} matchData - from getCountrySeverityMap()
+ */
+function buildLiveCountryBriefingHTML(countryName, matchData) {
+  const cats = window.ATTACK_CATEGORIES || {};
+  const ws   = window.WEAPON_SYSTEMS || {};
+  const conflicts = matchData.conflicts || [];
+
+  // Severity helpers
+  const sevColors = { critical: '#dc2626', high: '#f97316', medium: '#eab308', low: '#22c55e' };
+  const worstSev  = matchData.severity || 'low';
+  const headerColor = sevColors[worstSev] || '#6b7280';
+
+  // Aggregate all attack types
+  const allAttackTypes = [];
+  conflicts.forEach(c => { (c.attackTypes || []).forEach(at => { if (!allAttackTypes.includes(at)) allAttackTypes.push(at); }); });
+
+  // Aggregate all weapons
+  const allWeapons = [];
+  conflicts.forEach(c => { (c.weapons || []).forEach(w => { if (!allWeapons.includes(w)) allWeapons.push(w); }); });
+
+  // Aggregate all URLs
+  const allUrls = [];
+  conflicts.forEach(c => { (c.urls || []).forEach(u => { if (!allUrls.includes(u)) allUrls.push(u); }); });
+
+  // Total article count
+  const totalArticles = conflicts.reduce((s, c) => s + (c.articles || c.count || 0), 0);
+
+  // Threat assessment sentence
+  const threatSentences = [];
+  if (conflicts.length > 1) {
+    threatSentences.push(`${countryName} hosts ${conflicts.length} active conflict hotspots with a worst-case severity of <strong style="color:${headerColor}">${worstSev.toUpperCase()}</strong>.`);
+  } else if (conflicts.length === 1) {
+    threatSentences.push(`${countryName} has 1 active conflict hotspot rated <strong style="color:${headerColor}">${worstSev.toUpperCase()}</strong>.`);
+  }
+  if (allWeapons.length > 0) threatSentences.push(`${allWeapons.length} distinct weapon system${allWeapons.length > 1 ? 's' : ''} identified across all operations.`);
+  if (allAttackTypes.length > 0) threatSentences.push(`Attack vectors include: ${allAttackTypes.slice(0, 3).join(', ')}${allAttackTypes.length > 3 ? ` and ${allAttackTypes.length - 3} more` : ''}.`);
+
+  // ---- 1. HEADER ----
+  const attackBadges = allAttackTypes.map(at => {
+    const cat = cats[at] || {};
+    const col = cat.color || '#6b7280';
+    return `<span class="cb-attack-badge" style="background:${col}22;color:${col};border:1px solid ${col}44;">${at}</span>`;
+  }).join('');
+
+  const statsRow = `
+    <div class="cb-stat-row">
+      <div class="cb-stat">
+        <span class="cb-stat-num">${conflicts.length}</span>
+        <span class="cb-stat-label">Hotspot${conflicts.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div class="cb-stat">
+        <span class="cb-stat-num">${allWeapons.length}</span>
+        <span class="cb-stat-label">Weapon Systems</span>
+      </div>
+      <div class="cb-stat">
+        <span class="cb-stat-num">${allAttackTypes.length}</span>
+        <span class="cb-stat-label">Attack Vectors</span>
+      </div>
+      <div class="cb-stat">
+        <span class="cb-stat-num">${totalArticles.toLocaleString()}</span>
+        <span class="cb-stat-label">Articles</span>
+      </div>
+    </div>`;
+
+  const headerHTML = `
+    <div class="cb-header" style="border-top:4px solid ${headerColor};">
+      <div class="cb-header-top">
+        <div>
+          <div class="cb-country-name">${countryName}</div>
+          <div class="cb-country-sub">Country Intelligence Briefing &mdash; Live Conflicts</div>
+        </div>
+        ${badgeHTML(worstSev)}
+      </div>
+      ${statsRow}
+      ${attackBadges ? `<div class="cb-attack-badges-row">${attackBadges}</div>` : ''}
+      <div class="cb-threat-assessment">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        <span>${threatSentences.join(' ')}</span>
+      </div>
+    </div>`;
+
+  // ---- 2. CONFLICT SITUATION OVERVIEW ----
+  const conflictColors = ['#f97316','#a855f7','#06b6d4','#22c55e','#eab308','#3b82f6','#ec4899','#14b8a6'];
+  const conflictCardsHTML = conflicts.map((c, i) => {
+    const col = sevColors[c.severity] || '#6b7280';
+    const tagColor = conflictColors[i % conflictColors.length];
+    const safeId = `cbconf_${i}_${Date.now()}`;
+    const safeOnclick = `this.closest('.cb-conflict-card').classList.toggle('expanded')`;
+    const openDetailOnclick = `event.stopPropagation();openDetailPanel(((window.LIVE_CONFLICT_DATA||[]).find(x=>x.name===\`${(c.name||'').replace(/`/g,"'").replace(/"/g,'&quot;')}\`)||${JSON.stringify({name:c.name,severity:c.severity,description:c.description,casualties:c.casualties,country:c.country,region:c.region,conflictName:c.conflictName}).replace(/</g,'\\u003c').replace(/>/g,'\\u003e').replace(/&/g,'\\u0026')}),\'live\')`;
+    return `
+      <div class="cb-conflict-card" style="--conflict-accent:${tagColor};">
+        <div class="cb-conflict-card-header" onclick="${safeOnclick}">
+          <div class="cb-conflict-card-title">
+            <span class="cb-conflict-tag" style="background:${tagColor}22;color:${tagColor};border:1px solid ${tagColor}44;">${String.fromCharCode(65+i)}</span>
+            <span class="cb-conflict-name">${c.name || c.conflictName || 'Unknown'}</span>
+          </div>
+          <div class="cb-conflict-card-meta">
+            ${badgeHTML(c.severity || 'low')}
+            <svg class="cb-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </div>
+        <div class="cb-conflict-card-body">
+          ${c.conflictName && c.conflictName !== c.name ? `<div class="cb-conflict-subname">${c.conflictName}</div>` : ''}
+          <p class="cb-conflict-desc">${(c.description || 'No description available.').substring(0,300)}${(c.description||'').length>300?'...':''}</p>
+          ${c.casualties ? `<div class="cb-conflict-casualties"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> ${c.casualties}</div>` : ''}
+          <button class="cb-open-detail-btn" onclick="${openDetailOnclick}">View full detail &rarr;</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  const overviewHTML = `
+    <div class="cb-section">
+      <div class="dp-section-title">
+        <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Conflict Situation Overview
+        <span class="dp-count-badge">${conflicts.length}</span>
+      </div>
+      <div class="cb-conflict-list">${conflictCardsHTML}</div>
+    </div>`;
+
+  // ---- 3. UNIFIED TIMELINE ----
+  const allEvents = [];
+  conflicts.forEach((c, i) => {
+    const tagColor = conflictColors[i % conflictColors.length];
+    const label = String.fromCharCode(65+i);
+    (c.dailyActivity || []).forEach(da => {
+      allEvents.push({ date: da.date || '', event: da.event || '', conflictName: c.name || '', tagColor, label });
+    });
+  });
+  // Sort descending by date string (ISO dates sort lexicographically)
+  allEvents.sort((a, b) => b.date.localeCompare(a.date));
+
+  let timelineHTML = '';
+  if (allEvents.length > 0) {
+    const eventItems = allEvents.map(ev => `
+      <div class="cb-timeline-entry" style="border-left-color:${ev.tagColor};">
+        <div class="cb-timeline-entry-header">
+          <span class="cb-timeline-date">${ev.date}</span>
+          <span class="cb-conflict-tag cb-conflict-tag-sm" style="background:${ev.tagColor}22;color:${ev.tagColor};border:1px solid ${ev.tagColor}44;">${ev.label}: ${(ev.conflictName).substring(0,30)}${ev.conflictName.length>30?'...':''}</span>
+        </div>
+        <div class="cb-timeline-event-text">${ev.event}</div>
+      </div>`).join('');
+    timelineHTML = `
+      <div class="cb-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Unified Operations Timeline
+          <span class="dp-count-badge">${allEvents.length}</span>
+        </div>
+        <div class="cb-timeline">${eventItems}</div>
+      </div>`;
+  }
+
+  // ---- 4. WEAPONS INTELLIGENCE ----
+  let weaponsHTML = '';
+  if (allWeapons.length > 0) {
+    const grouped = {};
+    allWeapons.forEach(wName => {
+      const sys = ws[wName];
+      const cat = sys ? (sys.type || 'Other') : 'Other';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(wName);
+    });
+    const groupCards = Object.keys(grouped).map(cat => {
+      const items = grouped[cat].map(wName => {
+        const sys = ws[wName];
+        const col = getWeaponColor(wName);
+        const chips = sys ? [
+          sys.origin ? `<span class="dp-weapon-chip"><strong>Origin</strong> ${sys.origin}</span>` : '',
+          sys.range  ? `<span class="dp-weapon-chip"><strong>Range</strong> ${sys.range}</span>` : '',
+          sys.warhead? `<span class="dp-weapon-chip"><strong>Warhead</strong> ${sys.warhead}</span>` : ''
+        ].filter(Boolean).join('') : '<span class="dp-weapon-chip">No specs</span>';
+        return `
+          <div class="cb-weapon-card" style="border-left:3px solid ${col};">
+            <div class="cb-weapon-name" style="color:${col};">${wName}</div>
+            <div class="dp-weapon-meta">${chips}</div>
+          </div>`;
+      }).join('');
+      return `
+        <div class="cb-weapon-group">
+          <div class="cb-weapon-group-label">${cat}</div>
+          <div class="cb-weapon-grid">${items}</div>
+        </div>`;
+    }).join('');
+    weaponsHTML = `
+      <div class="cb-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Weapons Intelligence
+          <span class="dp-count-badge">${allWeapons.length} systems</span>
+        </div>
+        ${groupCards}
+      </div>`;
+  }
+
+  // ---- 5. ATTACK VECTOR ANALYSIS ----
+  let attackVectorsHTML = '';
+  if (allAttackTypes.length > 0) {
+    const cards = allAttackTypes.map(at => {
+      const cat = cats[at] || {};
+      const col = cat.color || '#6b7280';
+      const usedBy = conflicts.filter(c => (c.attackTypes||[]).includes(at)).map((c,i) => {
+        const idx = conflicts.indexOf(c);
+        const tagColor = conflictColors[idx % conflictColors.length];
+        return `<span class="cb-conflict-tag cb-conflict-tag-sm" style="background:${tagColor}22;color:${tagColor};border:1px solid ${tagColor}44;">${String.fromCharCode(65+idx)}</span>`;
+      }).join(' ');
+      return `
+        <div class="dp-attack-card" style="border-left:3px solid ${col};">
+          <span class="dp-attack-icon">${cat.icon || '⚡'}</span>
+          <div style="flex:1;">
+            <div class="dp-attack-name" style="color:${col};">${at}</div>
+            <div class="dp-attack-desc">${cat.desc || ''}</div>
+            ${usedBy ? `<div style="margin-top:4px;">${usedBy}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+    attackVectorsHTML = `
+      <div class="cb-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Attack Vector Analysis
+          <span class="dp-count-badge">${allAttackTypes.length}</span>
+        </div>
+        <div class="dp-attack-grid">${cards}</div>
+      </div>`;
+  }
+
+  // ---- 6. SOURCES & INTELLIGENCE ----
+  let sourcesHTML = '';
+  if (allUrls.length > 0) {
+    const linkItems = allUrls.slice(0, 12).map(url => {
+      let domain = url;
+      try { domain = new URL(url).hostname.replace('www.',''); } catch(e) {}
+      return `<a href="${url}" class="dp-source-link" target="_blank" rel="noopener noreferrer">
+        <svg class="dp-source-link-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        <span><strong style="color:var(--color-text)">${domain}</strong></span>
+      </a>`;
+    }).join('');
+    sourcesHTML = `
+      <div class="cb-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Source Intelligence
+          <span class="dp-count-badge">${totalArticles.toLocaleString()} articles</span>
+        </div>
+        <div class="dp-sources">${linkItems}</div>
+      </div>`;
+  }
+
+  // ---- 7. RELATED HISTORICAL CONFLICTS ----
+  const related = findRelatedHistorical(countryName, null, null);
+  let relatedHistHTML = '';
+  if (related.length > 0) {
+    const cards = related.slice(0, 6).map(r => {
+      const yearsStr = r.startYear + (r.endYear ? `\u2013${r.endYear}` : '\u2013Present');
+      const typeColor = TYPE_COLORS[r.type] || '#6b7280';
+      const sCol = getSevColor(r.severity);
+      return `
+        <div class="dp-related-card" onclick="openDetailPanel(window.HISTORICAL_CONFLICTS.find(x=>x.name===\`${r.name.replace(/`/g,"'").replace(/"/g,'&quot;')}\`), 'historical')">
+          <div class="dp-related-card-header">
+            <div class="dp-related-card-name">${r.name}</div>
+            <span class="dp-related-card-years">${yearsStr}</span>
+          </div>
+          <div class="dp-related-card-meta">
+            <span style="font-size:var(--text-xs);padding:1px 6px;border-radius:var(--radius-full);background:${typeColor}22;color:${typeColor};border:1px solid ${typeColor}44;">${r.type}</span>
+            ${r.fatalities > 0 ? `<span class="dp-related-card-fatalities">${formatNumber(r.fatalities)} est. fatalities</span>` : ''}
+          </div>
+          <div class="dp-severity-bar">
+            <div class="dp-severity-bar-track"><div class="dp-severity-bar-fill" style="width:${r.severity*20}%;background:${sCol};"></div></div>
+            <span class="dp-severity-label" style="color:${sCol};">${r.severity}/5</span>
+          </div>
+        </div>`;
+    }).join('');
+    relatedHistHTML = `
+      <div class="cb-section">
+        <div class="dp-section-title">
+          <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Historical Context
+          <span class="dp-count-badge">${related.length}</span>
+        </div>
+        <div class="dp-related-grid">${cards}</div>
+      </div>`;
+  }
+
+  return headerHTML + overviewHTML + timelineHTML + weaponsHTML + attackVectorsHTML + sourcesHTML + relatedHistHTML;
+}
+
+/**
+ * Build the HTML for a HISTORICAL country intelligence briefing.
+ * @param {string} countryName
+ * @param {Object} matchData - {conflicts, count, severity}
+ */
+function buildHistCountryBriefingHTML(countryName, matchData) {
+  const conflicts = matchData.conflicts || [];
+  const sevToColor = { 5: '#dc2626', 4: '#f97316', 3: '#eab308', 2: '#22c55e', 1: '#22c55e' };
+  const sevToLabel = { 5: 'critical', 4: 'high', 3: 'medium', 2: 'low', 1: 'low' };
+  const worstSev   = matchData.severity || 1;
+  const headerColor = sevToColor[worstSev] || '#6b7280';
+  const headerLabel = sevToLabel[worstSev] || 'low';
+
+  // Date range
+  const startYears = conflicts.map(c => c.startYear).filter(Boolean);
+  const endYears   = conflicts.map(c => c.endYear).filter(Boolean);
+  const earliest   = startYears.length > 0 ? Math.min(...startYears) : '?';
+  const latest     = endYears.length > 0 ? Math.max(...endYears) : 'Present';
+  const dateRange  = `${earliest}\u2013${latest}`;
+
+  // Total fatalities (may be numeric or string like "600,000+")
+  const totalFatalities = conflicts.reduce((sum, c) => {
+    if (typeof c.fatalities === 'number') return sum + c.fatalities;
+    return sum;
+  }, 0);
+
+  // Ongoing / resolved count
+  const ongoingCount  = conflicts.filter(c => !c.endYear || c.status === 'Ongoing').length;
+  const resolvedCount = conflicts.length - ongoingCount;
+
+  // ---- ACTIVE NOW banner ----
+  const liveMatches = findRelatedLive(countryName, null, null);
+  let activeBannerHTML = '';
+  if (liveMatches.length > 0) {
+    const sevColors2 = { critical: '#dc2626', high: '#f97316', medium: '#eab308', low: '#22c55e' };
+    const items = liveMatches.slice(0, 4).map(ld => {
+      const lc = sevColors2[ld.severity] || '#6b7280';
+      return `
+        <div class="cb-active-item" onclick="openDetailPanel(((window.LIVE_CONFLICT_DATA||[]).find(x=>x.name===\`${(ld.name||'').replace(/`/g,"'").replace(/"/g,'&quot;')}\`)||{}),\'live\')">
+          <span class="dot-pulse" style="width:8px;height:8px;flex-shrink:0;"></span>
+          ${badgeHTML(ld.severity)}
+          <span class="cb-active-item-name">${ld.name}</span>
+        </div>`;
+    }).join('');
+    activeBannerHTML = `
+      <div class="cb-active-banner">
+        <div class="cb-active-banner-title">
+          <span class="dot-pulse" style="width:10px;height:10px;"></span>
+          ACTIVE CONFLICT ZONE &mdash; ${liveMatches.length} live hotspot${liveMatches.length !== 1 ? 's' : ''} detected
+        </div>
+        <div class="cb-active-items">${items}</div>
+      </div>`;
+  }
+
+  // ---- HEADER ----
+  const statsRow = `
+    <div class="cb-stat-row">
+      <div class="cb-stat">
+        <span class="cb-stat-num">${conflicts.length}</span>
+        <span class="cb-stat-label">Conflicts</span>
+      </div>
+      <div class="cb-stat">
+        <span class="cb-stat-num">${ongoingCount}</span>
+        <span class="cb-stat-label">Ongoing</span>
+      </div>
+      <div class="cb-stat">
+        <span class="cb-stat-num">${resolvedCount}</span>
+        <span class="cb-stat-label">Resolved</span>
+      </div>
+      <div class="cb-stat">
+        <span class="cb-stat-num">${totalFatalities > 0 ? formatNumber(totalFatalities) : 'N/A'}</span>
+        <span class="cb-stat-label">Fatalities</span>
+      </div>
+    </div>`;
+
+  const headerHTML = `
+    ${activeBannerHTML}
+    <div class="cb-header" style="border-top:4px solid ${headerColor};">
+      <div class="cb-header-top">
+        <div>
+          <div class="cb-country-name">${countryName}</div>
+          <div class="cb-country-sub">Country Intelligence Briefing &mdash; Historical Conflicts</div>
+        </div>
+        <span class="badge badge-${headerLabel}">${headerLabel.toUpperCase()}</span>
+      </div>
+      <div class="cb-header-date-range">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <span>${dateRange}</span>
+      </div>
+      ${statsRow}
+    </div>`;
+
+  // ---- CONFLICT CARDS ----
+  const sortedConflicts = [...conflicts].sort((a,b) => (a.startYear||0) - (b.startYear||0));
+  const conflictCardsHTML = sortedConflicts.map((c, i) => {
+    const col = sevToColor[c.severity] || '#6b7280';
+    const lbl = sevToLabel[c.severity] || 'low';
+    const yearsStr = c.startYear + (c.endYear ? `\u2013${c.endYear}` : '\u2013Present');
+    const statusColor = c.status === 'Ongoing' ? 'var(--color-critical)' : c.status === 'Frozen' ? 'var(--color-medium)' : 'var(--color-low)';
+    const parties = (c.parties || []).map(p => `<span class="dp-party-chip">${p}</span>`).join('');
+    const safeOnclick = `this.closest('.cb-conflict-card').classList.toggle('expanded')`;
+    const openDetailOnclick = `event.stopPropagation();openDetailPanel(window.HISTORICAL_CONFLICTS.find(x=>x.name===\`${(c.name||'').replace(/`/g,"'").replace(/"/g,'&quot;')}\`)||{},\'historical\')`;
+    return `
+      <div class="cb-conflict-card" style="--conflict-accent:${col};">
+        <div class="cb-conflict-card-header" onclick="${safeOnclick}">
+          <div class="cb-conflict-card-title">
+            <span class="cb-hist-year-badge">${yearsStr}</span>
+            <span class="cb-conflict-name">${c.name}</span>
+          </div>
+          <div class="cb-conflict-card-meta">
+            <span class="badge badge-${lbl}">${lbl.toUpperCase()}</span>
+            ${c.type ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:${TYPE_COLORS[c.type]||'#6b7280'}22;color:${TYPE_COLORS[c.type]||'#9ca3af'};">${c.type}</span>` : ''}
+            <svg class="cb-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+        </div>
+        <div class="cb-conflict-card-body">
+          <div class="cb-conflict-body-meta">
+            ${c.status ? `<span class="badge" style="background:${statusColor}22;color:${statusColor};border:1px solid ${statusColor}44;">${c.status}</span>` : ''}
+            ${c.fatalities > 0 ? `<span class="dp-related-card-fatalities">${formatNumber(c.fatalities)} est. fatalities</span>` : (c.fatalities ? `<span class="dp-related-card-fatalities">${c.fatalities} fatalities</span>` : '')}
+          </div>
+          <p class="cb-conflict-desc">${(c.description||'No description available.').substring(0,300)}${(c.description||'').length>300?'...':''}</p>
+          ${parties ? `<div class="cb-parties-row">${parties}</div>` : ''}
+          <button class="cb-open-detail-btn" onclick="${openDetailOnclick}">View full detail &rarr;</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  const overviewHTML = `
+    <div class="cb-section">
+      <div class="dp-section-title">
+        <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Historical Conflict Records
+        <span class="dp-count-badge">${conflicts.length}</span>
+      </div>
+      <div class="cb-conflict-list">${conflictCardsHTML}</div>
+    </div>`;
+
+  // ---- VISUAL TIMELINE (chronological bar) ----
+  const minYear = earliest !== '?' ? earliest : (sortedConflicts[0]?.startYear || 1900);
+  const maxYear = new Date().getFullYear();
+  const span    = Math.max(maxYear - minYear, 1);
+
+  const timelineBarsHTML = sortedConflicts.map((c, i) => {
+    const col = sevToColor[c.severity] || '#6b7280';
+    const startPct = ((c.startYear - minYear) / span * 100).toFixed(1);
+    const endYear  = c.endYear || maxYear;
+    const widthPct = Math.max(((endYear - c.startYear) / span * 100), 1).toFixed(1);
+    const yearsStr = c.startYear + (c.endYear ? `\u2013${c.endYear}` : '\u2013');
+    return `
+      <div class="cb-timeline-bar-row">
+        <div class="cb-timeline-bar-label">${c.name.substring(0,28)}${c.name.length>28?'...':''}</div>
+        <div class="cb-timeline-bar-track">
+          <div class="cb-timeline-bar-fill" style="margin-left:${startPct}%;width:${widthPct}%;background:${col};opacity:0.85;"
+               title="${c.name} (${yearsStr})"></div>
+        </div>
+        <div class="cb-timeline-bar-years">${yearsStr}</div>
+      </div>`;
+  }).join('');
+
+  const visualTimelineHTML = `
+    <div class="cb-section">
+      <div class="dp-section-title">
+        <svg class="dp-section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/><polyline points="16 6 22 12 16 18"/></svg>
+        Conflict Timeline
+        <span class="dp-count-badge">${minYear}\u2013Present</span>
+      </div>
+      <div class="cb-timeline-bars">
+        <div class="cb-timeline-bars-header">
+          <span>${minYear}</span>
+          <span>Present</span>
+        </div>
+        ${timelineBarsHTML}
+      </div>
+    </div>`;
+
+  return headerHTML + overviewHTML + visualTimelineHTML;
+}
+
+/**
+ * Open the country intelligence briefing in the detail panel.
+ * @param {string} countryName
+ * @param {Object} matchData
+ * @param {'live'|'historical'} type
+ */
+function openCountryBriefing(countryName, matchData, type) {
+  const panel   = document.getElementById('detail-panel');
+  const overlay = document.getElementById('detail-overlay');
+  const content = document.getElementById('detail-panel-content');
+  if (!panel || !overlay || !content) return;
+
+  content.innerHTML = type === 'live'
+    ? buildLiveCountryBriefingHTML(countryName, matchData)
+    : buildHistCountryBriefingHTML(countryName, matchData);
+
+  content.scrollTop = 0;
+  panel.classList.add('open');
+  overlay.classList.add('open');
+  document.body.style.overflow = 'hidden';
 }
 
 /**
