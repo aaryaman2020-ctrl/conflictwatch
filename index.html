@@ -127,6 +127,10 @@
                 </button>
               </div>
               <div class="filter-row attack-type-filter-row" id="attack-type-filters">
+                <button class="atk-filter-btn zone-toggle-btn" id="zone-toggle" title="Toggle conflict zone shading">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>
+                  Zones
+                </button>
                 <button class="atk-filter-btn active" data-attack="all">All Types</button>
                 <button class="atk-filter-btn" data-attack="Airstrike">✈ Airstrike</button>
                 <button class="atk-filter-btn" data-attack="Missile Strike">🚀 Missile</button>
@@ -348,6 +352,16 @@
       </div><!-- /analytics panel -->
 
     </main>
+    <!-- ==================== DETAIL PANEL ==================== -->
+    <div class="detail-overlay" id="detail-overlay"></div>
+    <aside class="detail-panel" id="detail-panel" aria-label="Conflict details">
+      <div class="detail-panel-header">
+        <button class="detail-close-btn" id="detail-close-btn" aria-label="Close panel">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="detail-panel-content" id="detail-panel-content"></div>
+    </aside>
   </div><!-- /dashboard -->
 
   <!-- Scripts -->
@@ -356,6 +370,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="conflicts-data.js"></script>
   <script src="live-conflicts.js"></script>
+  <script src="conflict-zones.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
