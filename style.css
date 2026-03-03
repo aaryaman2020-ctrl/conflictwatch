@@ -1907,3 +1907,667 @@
 .conflict-zone-polygon {
   animation: zone-fade-in 0.6s ease-out;
 }
+
+/* ============================================================
+   COUNTRY INFO POPUP — choropleth click popups
+   ============================================================ */
+
+/* Leaflet popup wrapper for country details */
+.country-detail-popup .leaflet-popup-content-wrapper {
+  padding: 0 !important;
+  overflow: hidden;
+  min-width: 240px;
+}
+.country-detail-popup .leaflet-popup-content {
+  margin: 0 !important;
+  width: 100% !important;
+}
+
+.country-info-popup {
+  padding: var(--space-4) var(--space-5);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.country-popup-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.country-popup-header strong {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.country-popup-count {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* Conflict list */
+.country-popup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 200px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.country-popup-conflict-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 120ms ease;
+  min-height: 28px;
+}
+
+.country-popup-conflict-item:hover {
+  background: var(--color-surface-3, rgba(255,255,255,0.07));
+}
+
+[data-theme="light"] .country-popup-conflict-item:hover {
+  background: rgba(0,0,0,0.06);
+}
+
+.country-popup-sev-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.country-popup-conflict-name {
+  flex: 1;
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.country-popup-years {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.country-popup-sev-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.country-popup-hint {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  font-size: 10px;
+  color: var(--color-text-faint);
+  text-align: center;
+}
+
+/* Muted tooltip for non-conflict countries */
+.zone-tooltip-muted {
+  opacity: 0.7 !important;
+}
+
+/* Light theme adjustments for zone layers */
+[data-theme="light"] .country-info-popup {
+  background: var(--color-surface-2);
+}
+
+/* Ensure marker clusters appear above choropleth */
+.leaflet-marker-pane,
+.leaflet-overlay-pane .leaflet-marker-cluster {
+  z-index: 620;
+}
+/* ============================================================
+   COUNTRY BRIEFING PANEL — cb-* classes
+   ============================================================ */
+
+/* ---- Header ---- */
+.cb-header {
+  padding: var(--space-5);
+  background: var(--color-surface-2);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 0;
+}
+
+.cb-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.cb-country-name {
+  font-size: var(--text-xl);
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.cb-country-sub {
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  margin-top: 2px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.cb-header-date-range {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-3);
+}
+
+/* ---- Stat Row ---- */
+.cb-stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.cb-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-1);
+  text-align: center;
+}
+
+.cb-stat-num {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--color-text);
+  line-height: 1.1;
+}
+
+.cb-stat-label {
+  font-size: 9px;
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+}
+
+/* ---- Attack badges in header ---- */
+.cb-attack-badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: var(--space-3);
+}
+
+.cb-attack-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+/* ---- Threat assessment block ---- */
+.cb-threat-assessment {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ---- Section wrapper ---- */
+.cb-section {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cb-section:last-child {
+  border-bottom: none;
+}
+
+/* ---- Conflict card (collapsible) ---- */
+.cb-conflict-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cb-conflict-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--color-surface-2);
+  border-left: 3px solid var(--conflict-accent, var(--color-border));
+  transition: box-shadow 0.15s;
+}
+
+.cb-conflict-card:hover {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+}
+
+.cb-conflict-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-3);
+  cursor: pointer;
+  gap: var(--space-2);
+  user-select: none;
+}
+
+.cb-conflict-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.cb-conflict-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-conflict-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.cb-chevron {
+  color: var(--color-text-faint);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.cb-conflict-card.expanded .cb-chevron {
+  transform: rotate(180deg);
+}
+
+/* Card body (hidden until expanded) */
+.cb-conflict-card-body {
+  display: none;
+  padding: 0 var(--space-3) var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.cb-conflict-card.expanded .cb-conflict-card-body {
+  display: block;
+}
+
+.cb-conflict-subname {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+  margin-top: var(--space-2);
+  font-style: italic;
+}
+
+.cb-conflict-desc {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.55;
+  margin: var(--space-2) 0;
+}
+
+.cb-conflict-casualties {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs);
+  color: var(--color-high);
+  margin-bottom: var(--space-2);
+}
+
+.cb-conflict-body-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.cb-parties-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: var(--space-2);
+}
+
+/* ---- Conflict tag (letter badge) ---- */
+.cb-conflict-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cb-conflict-tag-sm {
+  font-size: 10px;
+  padding: 1px 5px;
+  line-height: 1.4;
+}
+
+/* ---- Historical year badge ---- */
+.cb-hist-year-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-faint);
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ---- Open detail button ---- */
+.cb-open-detail-btn {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: transparent;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  padding: 3px 10px;
+  cursor: pointer;
+  margin-top: var(--space-1);
+  transition: background 0.15s, color 0.15s;
+}
+
+.cb-open-detail-btn:hover {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+/* ---- Unified Timeline ---- */
+.cb-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.cb-timeline::-webkit-scrollbar {
+  width: 4px;
+}
+.cb-timeline::-webkit-scrollbar-track { background: transparent; }
+.cb-timeline::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 2px;
+}
+
+.cb-timeline-entry {
+  border-left: 3px solid var(--color-border);
+  padding: var(--space-3) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  position: relative;
+  transition: background 0.1s;
+}
+
+.cb-timeline-entry:last-child {
+  border-bottom: none;
+}
+
+.cb-timeline-entry:hover {
+  background: var(--color-surface-3);
+}
+
+.cb-timeline-entry-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.cb-timeline-date {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.cb-timeline-event-text {
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+/* ---- Weapons ---- */
+.cb-weapon-group {
+  margin-bottom: var(--space-3);
+}
+
+.cb-weapon-group:last-child {
+  margin-bottom: 0;
+}
+
+.cb-weapon-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cb-weapon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-2);
+}
+
+.cb-weapon-card {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  transition: box-shadow 0.15s;
+}
+
+.cb-weapon-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
+.cb-weapon-name {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+/* ---- Historical conflict timeline bars ---- */
+.cb-timeline-bars {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-2);
+  padding: var(--space-3);
+  overflow-x: hidden;
+}
+
+.cb-timeline-bars-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--color-text-faint);
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cb-timeline-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.cb-timeline-bar-row:last-child {
+  margin-bottom: 0;
+}
+
+.cb-timeline-bar-label {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  width: 110px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-timeline-bar-track {
+  flex: 1;
+  height: 10px;
+  background: var(--color-surface-3);
+  border-radius: var(--radius-full);
+  position: relative;
+  overflow: hidden;
+}
+
+.cb-timeline-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  min-width: 3px;
+}
+
+.cb-timeline-bar-years {
+  font-size: 10px;
+  color: var(--color-text-faint);
+  width: 72px;
+  flex-shrink: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ---- Active Now banner ---- */
+.cb-active-banner {
+  background: linear-gradient(135deg, rgba(220,38,38,0.12) 0%, rgba(249,115,22,0.08) 100%);
+  border: 1px solid rgba(220,38,38,0.35);
+  border-bottom: none;
+  padding: var(--space-3) var(--space-5);
+}
+
+.cb-active-banner-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--color-critical);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-2);
+}
+
+.cb-active-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.cb-active-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  transition: background 0.1s;
+}
+
+.cb-active-item:hover {
+  background: rgba(220,38,38,0.08);
+}
+
+.cb-active-item-name {
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  font-weight: 500;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Light theme tweaks ---- */
+[data-theme="light"] .cb-header {
+  background: var(--color-surface-2);
+}
+
+[data-theme="light"] .cb-conflict-card {
+  background: #fff;
+}
+
+[data-theme="light"] .cb-timeline {
+  background: #fff;
+}
+
+[data-theme="light"] .cb-timeline-entry:hover {
+  background: var(--color-surface-2);
+}
+
+[data-theme="light"] .cb-weapon-card {
+  background: #fff;
+}
+
+[data-theme="light"] .cb-timeline-bars {
+  background: #fff;
+}
