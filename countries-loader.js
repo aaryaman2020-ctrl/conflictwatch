@@ -6,7 +6,7 @@ window._origLoadCountries = window.loadCountriesGeoJSON;
 window.loadCountriesGeoJSON = async function() {
   if (window.STATE && window.STATE.countriesGeoJSON) return window.STATE.countriesGeoJSON;
   try {
-    const TOTAL_PARTS = 14;
+    const TOTAL_PARTS = 15;
     const results = await Promise.all(
       Array.from({length: TOTAL_PARTS}, (_, i) =>
         fetch(`countries_part${i+1}.geojson`).then(r => r.json()).catch(() => ({type:"FeatureCollection",features:[]}))
