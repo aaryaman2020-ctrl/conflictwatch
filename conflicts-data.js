@@ -303,7 +303,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Genocide",
     fatalities: 800000,
     severity: 5,
-    description: "In just 100 days between April and July 1994, an estimated 500,000-800,000 Tutsi and moderate Hutu were systematically murdered by Hutu extremists. The international community's failure to intervene became a defining case study in genocide prevention. The RPF eventually ended the genocide.",
+    description: "In just 100 days between April and July 1994, an estimated 500,000–800,000 Tutsi and moderate Hutu were systematically murdered by Hutu extremists. The international community's failure to intervene became a defining case study in genocide prevention. The RPF eventually ended the genocide.",
     parties: ["Hutu Interahamwe", "Tutsi RPF", "Rwandan Government forces"],
     status: "Ended"
   },
@@ -387,7 +387,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Civil War",
     fatalities: 50000,
     severity: 4,
-    description: "The CAR has been engulfed in conflict since Seleka coalition rebels overthrew President Bozize in 2013. Subsequent fighting between Seleka and anti-Balaka Christian militias caused mass atrocities. Russian Wagner Group forces arrived in 2018, helping the government gain ground while committing abuses.",
+    description: "The CAR has been engulfed in conflict since Seleka coalition rebels overthrew President Bozizé in 2013. Subsequent fighting between Seleka and anti-Balaka Christian militias caused mass atrocities. Russian Wagner Group forces arrived in 2018, helping the government gain ground while committing abuses.",
     parties: ["CAR Government", "Seleka/ex-Seleka", "Anti-Balaka", "Wagner Group/Russia", "MINUSCA"],
     status: "Ongoing"
   },
@@ -429,7 +429,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Insurgency",
     fatalities: 5000,
     severity: 3,
-    description: "An Islamist insurgency in Cabo Delgado province in northern Mozambique began in 2017, linked to ISIS. The insurgents captured the port town of Mocimboa da Praia and threatened major natural gas projects. SADC forces and Rwandan troops deployed in 2021 to push back the insurgency.",
+    description: "An Islamist insurgency in Cabo Delgado province in northern Mozambique began in 2017, linked to ISIS. The insurgents captured the port town of Mocímboa da Praia and threatened major natural gas projects. SADC forces and Rwandan troops deployed in 2021 to push back the insurgency.",
     parties: ["Ansar al-Sunna/ISIS", "Mozambique Armed Forces", "SADC Mission", "Rwanda", "DYCK Advisory Group"],
     status: "Ongoing"
   },
@@ -643,7 +643,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Genocide",
     fatalities: 2000000,
     severity: 5,
-    description: "The Khmer Rouge under Pol Pot executed a radical agrarian revolution that killed between 1.5 and 2 million Cambodians through execution, forced labor, starvation, and disease -- approximately 25% of Cambodia's population. Cities were forcibly evacuated, intellectuals were killed, and a reign of terror lasted four years.",
+    description: "The Khmer Rouge under Pol Pot executed a radical agrarian revolution that killed between 1.5 and 2 million Cambodians through execution, forced labor, starvation, and disease — approximately 25% of Cambodia's population. Cities were forcibly evacuated, intellectuals were killed, and a reign of terror lasted four years.",
     parties: ["Khmer Rouge", "Cambodian population"],
     status: "Ended"
   },
@@ -717,7 +717,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Civil War",
     fatalities: 200000,
     severity: 5,
-    description: "Guatemala's 36-year civil war between the US-backed government and leftist guerrillas was marked by genocide against indigenous Maya communities. The 1981-1983 period under General Rios Montt saw mass massacres in highland villages. A UN commission later attributed 93% of atrocities to state forces.",
+    description: "Guatemala's 36-year civil war between the US-backed government and leftist guerrillas was marked by genocide against indigenous Maya communities. The 1981-1983 period under General Ríos Montt saw mass massacres in highland villages. A UN commission later attributed 93% of atrocities to state forces.",
     parties: ["Guatemala Government", "URNG guerrillas", "USA"],
     status: "Ended"
   },
@@ -745,7 +745,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Civil War",
     fatalities: 8000,
     severity: 4,
-    description: "Following the assassination of President Moise in July 2021, powerful gangs seized control of large swathes of Haiti. Gang leader Barbecue and the Viv Ansanm coalition launched coordinated attacks in 2024, taking the airport and prisons. A Kenyan-led multinational security mission deployed in 2024.",
+    description: "Following the assassination of President Moïse in July 2021, powerful gangs seized control of large swathes of Haiti. Gang leader Barbecue and the Viv Ansanm coalition launched coordinated attacks in 2024, taking the airport and prisons. A Kenyan-led multinational security mission deployed in 2024.",
     parties: ["Haitian gangs/Viv Ansanm", "Haitian National Police", "MSS (Kenya-led)"],
     status: "Ongoing"
   },
@@ -893,7 +893,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Insurgency",
     fatalities: 15000,
     severity: 4,
-    description: "Jihadist groups linked to Al-Qaeda (JNIM) and ISIS have spread from Mali into Burkina Faso, capturing large areas of the country and besieging towns. Two military coups in 2022 brought Captain Traore to power, who expelled French forces and invited Russian Wagner/Africa Corps. Over 2 million are displaced.",
+    description: "Jihadist groups linked to Al-Qaeda (JNIM) and ISIS have spread from Mali into Burkina Faso, capturing large areas of the country and besieging towns. Two military coups in 2022 brought Captain Traoré to power, who expelled French forces and invited Russian Wagner/Africa Corps. Over 2 million are displaced.",
     parties: ["Burkina Faso", "JNIM", "ISGS", "Russia/Africa Corps"],
     status: "Ongoing"
   },
@@ -907,7 +907,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Insurgency",
     fatalities: 10000,
     severity: 3,
-    description: "Niger has faced escalating jihadist attacks from JNIM and ISGS in the Tillaberi region bordering Mali and Burkina Faso. A military coup in July 2023 led to the expulsion of French and US forces. The Sahel Alliance (Niger, Mali, Burkina Faso) formed to coordinate security but with Russian backing.",
+    description: "Niger has faced escalating jihadist attacks from JNIM and ISGS in the Tillabéri region bordering Mali and Burkina Faso. A military coup in July 2023 led to the expulsion of French and US forces. The Sahel Alliance (Niger, Mali, Burkina Faso) formed to coordinate security but with Russian backing.",
     parties: ["Niger", "JNIM", "ISGS", "Russia"],
     status: "Ongoing"
   },
@@ -991,7 +991,7 @@ window.HISTORICAL_CONFLICTS = [
     type: "Civil War",
     fatalities: 2000,
     severity: 2,
-    description: "A military coup in September 2021 overthrew President Conde following disputed elections in 2020. Political violence and crackdowns on protesters have caused casualties. The military junta has resisted pressure to restore civilian rule, and violence against opposition continues.",
+    description: "A military coup in September 2021 overthrew President Condé following disputed elections in 2020. Political violence and crackdowns on protesters have caused casualties. The military junta has resisted pressure to restore civilian rule, and violence against opposition continues.",
     parties: ["Guinea Military Junta", "Opposition groups"],
     status: "Ongoing"
   },
@@ -1076,7 +1076,7 @@ window.HISTORICAL_CONFLICTS = [
     fatalities: 5000,
     severity: 3,
     description: "Venezuela descended into a political and humanitarian crisis under Maduro's rule, with widespread political violence, gang/colectivo control, and FARC and ELN presence in border regions. Political crackdowns following the disputed 2024 elections led to mass protests and arrests of opposition leaders.",
-    parties: ["Maduro Government", "Opposition/Guaido", "FARC/ELN", "Colectivos"],
+    parties: ["Maduro Government", "Opposition/Guaidó", "FARC/ELN", "Colectivos"],
     status: "Ongoing"
   }
 ];
