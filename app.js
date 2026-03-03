@@ -527,8 +527,17 @@ function normalizeCountryName(name) {
 async function loadCountriesGeoJSON() {
   if (STATE.countriesGeoJSON) return STATE.countriesGeoJSON;
   try {
-    const resp = await fetch('countries.geojson');
-    STATE.countriesGeoJSON = await resp.json();
+    // Load from embedded JS variables (split into two parts for GitHub compatibility)
+    if (typeof COUNTRIES_GEOJSON_P1 !== 'undefined' && typeof COUNTRIES_GEOJSON_P2 !== 'undefined') {
+      STATE.countriesGeoJSON = {
+        type: 'FeatureCollection',
+        features: [...COUNTRIES_GEOJSON_P1.features, ...COUNTRIES_GEOJSON_P2.features]
+      };
+    } else {
+      // Fallback: try fetching the file
+      const resp = await fetch('countries.geojson');
+      STATE.countriesGeoJSON = await resp.json();
+    }
   } catch(e) {
     console.warn('Failed to load countries GeoJSON:', e);
     STATE.countriesGeoJSON = { type: 'FeatureCollection', features: [] };
